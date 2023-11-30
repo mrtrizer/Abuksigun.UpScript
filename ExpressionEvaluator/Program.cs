@@ -7,13 +7,16 @@ public enum TokenType
     Block,
     Skip,
     Literal,
+    Reference,
     Binary,
     Unary
 }
 
-public record Token(TokenType Type, object value, int StartIndex, int Length, List<Token> Children)
+public record Token(TokenType Type, object Value, int StartIndex, int Length, List<Token> Children)
 {
-   public int Length { get; set; } = Length;
+    public TokenType Type { get; set; } = Type;
+    public object Value { get; set; } = Value;
+    public int Length { get; set; } = Length;
 }
 
 public class Parser
@@ -35,18 +38,6 @@ public class Parser
         Stack.Peek().Children.Add(token);
         return token;
     }
-    bool PushToken(TokenType tokenType)
-    {
-        Stack.Push(AddToken(tokenType, null, position, 0));
-        return true;
-    }
-    bool PopToken() 
-    {
-        var token = Stack.Pop();
-        token.Length = position - token.StartIndex;
-        return token != null;
-    }
-
     private bool Space()
     {
         while (position < input.Length && char.IsWhiteSpace(input[position]))
@@ -59,8 +50,60 @@ public class Parser
         while (Array.TrueForAll(funcs, func => func())) { /* Nothing */ }
         return true;
     }
-    bool Or(params bool[] args) => Array.IndexOf(args, true) != -1;
-    bool Match(string str, TokenType tokenType)
+    bool Or(params Func<bool>[] args)
+    {
+        int start = position;
+        foreach (var func in args)
+        {
+            if (func())
+                return true;
+            else
+                position = start;
+        }
+        return false;
+    }
+    bool And(params Func<bool>[] args) => AndParsed(TokenType.Block, null, args);
+    bool AndParsed(TokenType tokenType, Func<string, object> parse, params Func<bool>[] args)
+    {
+        Stack.Push(AddToken(TokenType.Block, null, position, 0));
+        bool result = true;
+        int start = position;
+        foreach (var func in args)
+        {
+            if (!func())
+            {
+                position = start;
+                result = false;
+                break;
+            }
+        }
+
+        var token = Stack.Pop();
+        if (result)
+        {
+            token.Type = tokenType;
+            token.Length = position - token.StartIndex;
+            if (parse != null)
+                token.Value = parse(input.Substring(token.StartIndex, token.Length));
+            if (tokenType == TokenType.Block)
+            {
+                var parent = Stack.Peek();
+                if (token.Children.Count <= 1)
+                    parent.Children.Remove(token);
+                if (token.Children.Count == 1)
+                    parent.Children.Add(token.Children[0]);
+            }
+        }
+        else
+        {
+            var parent = Stack.Peek();
+            parent.Children.Remove(token);
+        }
+
+        return result;
+
+    }
+    bool Match(string str, TokenType tokenType = TokenType.Skip)
     {
         if (position + str.Length - 1 < input.Length && input.AsSpan(position, str.Length).SequenceEqual(str.AsSpan()))
         {
@@ -71,29 +114,31 @@ public class Parser
         return false;
     }
 
-    bool Number()
+    bool Range(char start, char end, TokenType tokenType = TokenType.Skip)
     {
-        int start = position;
-        while (position < input.Length && char.IsDigit(input[position]))
+        if (input[position] >= start && input[position] <= end)
+        {
+            AddToken(tokenType, null, position, 1);
             position++;
-        if (position > start)
-            return AddToken(TokenType.Literal, int.Parse(input.AsSpan(start, position - start)), start, position - start) != null;
+            return true;
+        }
         return false;
     }
-    bool Expression() => PushToken(TokenType.Block) && Term() && ZeroOrMore(() => Or(Match("+", TokenType.Binary), Match("-", TokenType.Binary)) && Term()) && PopToken();
-    bool Term() => PushToken(TokenType.Block) && Factor() && ZeroOrMore(() => Or(Match("*", TokenType.Binary), Match("/", TokenType.Binary)) && Factor()) && PopToken();
-    bool Factor() => PushToken(TokenType.Block) && Space() && Or(Number(), Match("(", TokenType.Skip) && PushToken(TokenType.Block) && Expression() && Match(")", TokenType.Skip) && PopToken()) && Space() && PopToken();
 
-    Token CleanUp(Token token) => token.Children.Count == 1
-            ? CleanUp(token.Children[0])
-            : new Token(token.Type, token.value, token.StartIndex, token.Length, token.Children.Select(CleanUp).ToList());
+    bool Number => And(() => Range('0', '9'), () => ZeroOrMore(() => Range('0', '9')));
+    bool NumberLiteral => AndParsed(TokenType.Literal, x => int.Parse(x), () => Number);
+    bool Letter => Or(() => Range('a', 'z'), () => Range('A', 'Z'));
+    bool Reference => AndParsed(TokenType.Reference, x => x, () => Letter, () => ZeroOrMore(() => Or(() => Letter, () => Range('0', '9'))));
+    bool Expression => And(() => Term, () => ZeroOrMore(() => Or(() => Match("+", TokenType.Binary), () => Match("-", TokenType.Binary)), () => Term));
+    bool Term => And(() => Factor, ()=> ZeroOrMore(() => Or(() => Match("*", TokenType.Binary), () => Match("/", TokenType.Binary)), () => Factor));
+    bool Factor => And(() => Space(), () => Or(() => NumberLiteral, () => Reference, () => Match("(", TokenType.Skip) && And(() => Expression, () => Match(")", TokenType.Skip))) && Space());
 
     public Token Parse()
     {
         Stack.Push(new Token(TokenType.Block, null, 0, 0, new()));
-        Expression();
-        var root = CleanUp(Stack.Pop());
-        if (root.Length != input.Length)
+        bool success = Expression;
+        var root = Stack.Pop();
+        if (!success)
         {
             while (root.Children.Count > 0)
                 root = root.Children.Last();
@@ -160,7 +205,6 @@ public class Parser
         return null;
     }
 
-
     static IEnumerable<Delegate> FindImplicitConversions(Type type)
     {
         List<Delegate> conversions = new List<Delegate>();
@@ -182,6 +226,15 @@ public class Parser
         return conversions;
     }
 
+    static object GetReferenceValue(string name)
+    {
+        return 10;
+    }
+
+    static Type GetReferenceType(string name)
+    {
+        return typeof(int);
+    }
 
     static Type CompileRecursive(string input, Token token, List<object> flow)
     {
@@ -189,8 +242,13 @@ public class Parser
         {
             if (token.Type == TokenType.Literal)
             {
-                flow.Add(token.value);
-                return token.value.GetType();
+                flow.Add(token.Value);
+                return token.Value.GetType();
+            }
+            else if (token.Type == TokenType.Reference)
+            {
+                flow.Add(() => GetReferenceValue(token.Value as string));
+                return GetReferenceType(token.Value as string);
             }
             else if (token.Type == TokenType.Block)
             {
@@ -253,7 +311,7 @@ public static class Program
 
     public static void Main()
     {
-        string input = "10* 20 +20 + 2+3*4*(5 + 6)";
+        string input = "test * 20 +20 + 2+3*4*(5 + 6)";
         Parser parser = new Parser(input);
         var root = parser.Parse();
         PrintToken(input, root);
@@ -279,6 +337,10 @@ public static class Program
                 {
                     var a = stack.Pop();
                     stack.Push(func.DynamicInvoke(a));
+                }
+                else if (parameters.Length == 0)
+                {
+                    stack.Push(func.DynamicInvoke());
                 }
             }
             else
