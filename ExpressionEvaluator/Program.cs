@@ -23,11 +23,13 @@ public class Parser
 {
     readonly string input;
     int position = 0;
-    public Stack<Token> Stack { get; } = new();
+    Stack<Token> stack = new();
+    public Dictionary<string, object> Variables { get; } = new();
 
-    public Parser(string input)
+    public Parser(string input, Dictionary<string, object> variables)
     {
         this.input = input;
+        Variables = variables;
     }
 
     Token AddToken(TokenType tokenType, object value, int StartIndex, int Length)
@@ -35,7 +37,7 @@ public class Parser
         if (tokenType == TokenType.Skip)
             return null;
         var token = new Token(tokenType, value, StartIndex, Length, new());
-        Stack.Peek().Children.Add(token);
+        stack.Peek().Children.Add(token);
         return token;
     }
     private bool Space()
@@ -62,23 +64,27 @@ public class Parser
         }
         return false;
     }
-    bool And(params Func<bool>[] args) => AndParsed(TokenType.Block, null, args);
-    bool AndParsed(TokenType tokenType, Func<string, object> parse, params Func<bool>[] args)
+    bool And(params Func<bool>[] args)
     {
-        Stack.Push(AddToken(TokenType.Block, null, position, 0));
-        bool result = true;
         int start = position;
         foreach (var func in args)
         {
             if (!func())
             {
                 position = start;
-                result = false;
-                break;
+                return false;
             }
         }
+        return true;
+    }
 
-        var token = Stack.Pop();
+    bool Block(Func<bool> arg, TokenType tokenType = TokenType.Block, Func<string, object> parse = null)
+    {
+        stack.Push(AddToken(TokenType.Block, null, position, 0));
+
+        bool result = arg();
+
+        var token = stack.Pop();
         if (result)
         {
             token.Type = tokenType;
@@ -87,7 +93,7 @@ public class Parser
                 token.Value = parse(input.Substring(token.StartIndex, token.Length));
             if (tokenType == TokenType.Block)
             {
-                var parent = Stack.Peek();
+                var parent = stack.Peek();
                 if (token.Children.Count <= 1)
                     parent.Children.Remove(token);
                 if (token.Children.Count == 1)
@@ -96,13 +102,13 @@ public class Parser
         }
         else
         {
-            var parent = Stack.Peek();
+            var parent = stack.Peek();
             parent.Children.Remove(token);
         }
 
         return result;
-
     }
+
     bool Match(string str, TokenType tokenType = TokenType.Skip)
     {
         if (position + str.Length - 1 < input.Length && input.AsSpan(position, str.Length).SequenceEqual(str.AsSpan()))
@@ -116,6 +122,8 @@ public class Parser
 
     bool Range(char start, char end, TokenType tokenType = TokenType.Skip)
     {
+        if (input.Length <= position)
+            return false;
         if (input[position] >= start && input[position] <= end)
         {
             AddToken(tokenType, null, position, 1);
@@ -125,20 +133,36 @@ public class Parser
         return false;
     }
 
-    bool Number => And(() => Range('0', '9'), () => ZeroOrMore(() => Range('0', '9')));
-    bool NumberLiteral => AndParsed(TokenType.Literal, x => int.Parse(x), () => Number);
+    bool Digits => And(() => Range('0', '9'), () => ZeroOrMore(() => Range('0', '9')));
     bool Letter => Or(() => Range('a', 'z'), () => Range('A', 'Z'));
-    bool Reference => AndParsed(TokenType.Reference, x => x, () => Letter, () => ZeroOrMore(() => Or(() => Letter, () => Range('0', '9'))));
-    bool Expression => And(() => Term, () => ZeroOrMore(() => Or(() => Match("+", TokenType.Binary), () => Match("-", TokenType.Binary)), () => Term));
-    bool Term => And(() => Factor, ()=> ZeroOrMore(() => Or(() => Match("*", TokenType.Binary), () => Match("/", TokenType.Binary)), () => Factor));
-    bool Factor => And(() => Space(), () => Or(() => NumberLiteral, () => Reference, () => Match("(", TokenType.Skip) && And(() => Expression, () => Match(")", TokenType.Skip))) && Space());
+    bool Integer => Block(() => Digits, TokenType.Literal, x => int.Parse(x));
+    bool Float => Block(() => And(() => Digits, () => Match("."), () => Digits), TokenType.Literal, x => float.Parse(x));
+    bool NumberLiteral => Or(() => Float, () => Integer);
+
+    bool Reference => Block(() => And(() => Letter, () => ZeroOrMore(() => Or(() => Letter, () => Range('0', '9')))), TokenType.Reference, x => x);
+    bool BracketBlock => Block(() => And(() => Match("("), () => Expression, () => Match(")")));
+    bool Factor => Block(() => And(() => Space(), () => Or(() => Match("-", TokenType.Unary), () => Match("!", TokenType.Unary), () => true), () => Or(() => NumberLiteral, () => Reference, () => BracketBlock) && Space()));
+    
+    bool Term => Block(() => And(() => Factor, () => ZeroOrMore(() => Or(() => Match("*", TokenType.Binary), () => Match("/", TokenType.Binary), () => Match("%", TokenType.Binary)), () => Factor)));
+    bool Expression => Block(() => And(() => Term, () => ZeroOrMore(() => Or(() => Match("+", TokenType.Binary), () => Match("-", TokenType.Binary)), () => Term)));
+    bool Comparison => Block(() => And(() => Expression, () => ZeroOrMore(() => Or(() => Match("<", TokenType.Binary), () => Match("<=", TokenType.Binary), () => Match(">", TokenType.Binary), () => Match(">=", TokenType.Binary), () => Match("==", TokenType.Binary), () => Match("!=", TokenType.Binary)), () => Expression)));
+    bool Logical => Block(() => And(() => Comparison, () => ZeroOrMore(() => Or(() => Match("&&", TokenType.Binary), () => Match("||", TokenType.Binary)), () => Comparison)));
+
+    static void PrintToken(string input, Token token, int level = 0)
+    {
+        Console.WriteLine($"{new string(' ', level * 2)}{token.Type} {input.Substring(token.StartIndex, token.Length)}");
+        foreach (var child in token.Children)
+            PrintToken(input, child, level + 1);
+    }
+
 
     public Token Parse()
     {
-        Stack.Push(new Token(TokenType.Block, null, 0, 0, new()));
-        bool success = Expression;
-        var root = Stack.Pop();
-        if (!success)
+        stack.Push(new Token(TokenType.Block, null, 0, 0, new()));
+        bool success = Logical;
+        var root = stack.Pop().Children.First();
+        PrintToken(input, root);
+        if (!success || root.Length != input.Length)
         {
             while (root.Children.Count > 0)
                 root = root.Children.Last();
@@ -226,17 +250,7 @@ public class Parser
         return conversions;
     }
 
-    static object GetReferenceValue(string name)
-    {
-        return 10;
-    }
-
-    static Type GetReferenceType(string name)
-    {
-        return typeof(int);
-    }
-
-    static Type CompileRecursive(string input, Token token, List<object> flow)
+    Type CompileRecursive(Token token, List<object> flow)
     {
         try
         {
@@ -247,12 +261,12 @@ public class Parser
             }
             else if (token.Type == TokenType.Reference)
             {
-                flow.Add(() => GetReferenceValue(token.Value as string));
-                return GetReferenceType(token.Value as string);
+                flow.Add(() => Variables[token.Value as string]);
+                return Variables[token.Value as string].GetType();
             }
             else if (token.Type == TokenType.Block)
             {
-                Type t1 = CompileRecursive(input, token.Children[0], flow);
+                Type t1 = CompileRecursive(token.Children[0], flow);
                 for (int i = 1; i < token.Children.Count; i++)
                 {
                     var child = token.Children[i];
@@ -260,7 +274,7 @@ public class Parser
                     {
                         if (child.Type == TokenType.Binary)
                         {
-                            Type t2 = CompileRecursive(input, token.Children[i + 1], flow);
+                            Type t2 = CompileRecursive(token.Children[i + 1], flow);
 
                             // TODO: Find implicit conversion if can't find exact match
 
@@ -287,35 +301,28 @@ public class Parser
         }
         catch
         {
-            // Next line will throw exception
+            throw;
         }
         throw new Exception($"Invalid expression at: {token.StartIndex}\n{input.Substring(0, token.StartIndex)}###");
     }
 
-    public static List<object> Compile(string input, Token root)
+    public List<object> Compile(Token root)
     {
         List<object> instructions = new();
-        CompileRecursive(input, root, instructions);
+        CompileRecursive(root, instructions);
         return instructions;
     }
 }
 
 public static class Program
 {
-    static void PrintToken(string input, Token token, int level = 0)
-    {
-        Console.WriteLine($"{new string(' ', level * 2)}{token.Type} {input.Substring(token.StartIndex, token.Length)}");
-        foreach (var child in token.Children)
-            PrintToken(input, child, level + 1);
-    }
 
     public static void Main()
     {
-        string input = "test * 20 +20 + 2+3*4*(5 + 6)";
-        Parser parser = new Parser(input);
+        string input = "2 + test * 20 +20 + 2+3*4*(5 + 6)";
+        Parser parser = new Parser(input, new() { { "test", 10 } });
         var root = parser.Parse();
-        PrintToken(input, root);
-        var instructions = Parser.Compile(input, root);
+        var instructions = parser.Compile(root);
         Console.WriteLine($"Result: {Run(instructions)}");
     }
 
@@ -327,27 +334,14 @@ public static class Program
             if (item is Delegate func)
             {
                 var parameters = func.Method.GetParameters();
-                if (parameters.Length == 2)
-                {
-                    var b = stack.Pop();
-                    var a = stack.Pop();
-                    stack.Push(func.DynamicInvoke(a, b));
-                }
-                else if (parameters.Length == 1)
-                {
-                    var a = stack.Pop();
-                    stack.Push(func.DynamicInvoke(a));
-                }
-                else if (parameters.Length == 0)
-                {
-                    stack.Push(func.DynamicInvoke());
-                }
+                var paramsArray = parameters.Select(x => stack.Pop()).Reverse().ToArray();
+                stack.Push(func.DynamicInvoke(paramsArray));
             }
             else
             {
                 stack.Push(item);
             }
-            Console.WriteLine(item);
+            Console.WriteLine($"{item} = {stack.Peek()}");
         }
 
         return stack.Pop();
