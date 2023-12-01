@@ -125,13 +125,20 @@ public class Parser
         return false;
     }
 
-    bool Range(char start, char end, TokenType tokenType = TokenType.Skip)
+    bool Range(char start, char end)
     {
-        if (input.Length <= position)
-            return false;
-        if (input[position] >= start && input[position] <= end)
+        if (input.Length > position && input[position] >= start && input[position] <= end)
         {
-            AddToken(tokenType, null, position, 1);
+            position++;
+            return true;
+        }
+        return false;
+    }
+
+    bool Character()
+    {
+        if (input.Length > position && char.IsAsciiLetter(input[position]))
+        {
             position++;
             return true;
         }
@@ -143,10 +150,12 @@ public class Parser
     bool Integer => Block(() => Digits, TokenType.Literal, x => int.Parse(x));
     bool Float => Block(() => And(() => Digits, () => Match("."), () => Digits), TokenType.Literal, x => float.Parse(x));
     bool NumberLiteral => Or(() => Float, () => Integer);
+    bool BoolLiteral => Block(() => Or(() => Match("true"), () => Match("false")), TokenType.Literal, x => bool.Parse(x));
+    bool StringLiteral => Block(() => And(() => Match("\""), () => ZeroOrMore(() => Character()), () => Match("\"")), TokenType.Literal, x => x[1..^1]);
 
     bool Reference => Block(() => And(() => Letter, () => ZeroOrMore(() => Or(() => Letter, () => Range('0', '9')))), TokenType.Reference, x => x);
-    bool BracketBlock => Block(() => And(() => Match("("), () => Expression, () => Match(")")));
-    bool Factor => Block(() => And(() => Space(), () => Or(() => Match("-", TokenType.Unary), () => Match("!", TokenType.Unary), () => true), () => Or(() => NumberLiteral, () => Reference, () => BracketBlock) && Space()));
+    bool BracketBlock => Block(() => And(() => Match("("), () => Logical, () => Match(")")));
+    bool Factor => Block(() => And(() => Space(), () => Or(() => Match("-", TokenType.Unary), () => Match("!", TokenType.Unary), () => true), () => Or(() => NumberLiteral, () => StringLiteral, () => BoolLiteral, () => Reference, () => BracketBlock) && Space()));
     
     bool Term => Block(() => And(() => Factor, () => ZeroOrMore(() => Or(() => Match("*", TokenType.Binary), () => Match("/", TokenType.Binary), () => Match("%", TokenType.Binary)), () => Factor)));
     bool Expression => Block(() => And(() => Term, () => ZeroOrMore(() => Or(() => Match("+", TokenType.Binary), () => Match("-", TokenType.Binary)), () => Term)));
@@ -199,7 +208,7 @@ public class Parser
         { "!", "op_LogicalNot" },
     };
 
-    static Dictionary<string, Delegate[]> additionalOperators = new()
+    static Dictionary<string, Delegate[]> fastOperators = new()
     {
         { "op_Addition", new Delegate[] { (int a, int b) => a + b, (double a, double b) => a + b, (float a, float b) => a + b, (long a, long b) => a + b, (string a, string b) => a + b, (char a, char b) => a.ToString() + b.ToString() } },
         { "op_Subtraction", new Delegate[] { (int a, int b) => a - b, (double a, double b) => a - b, (float a, float b) => a - b, (long a, long b) => a - b } },
@@ -222,16 +231,26 @@ public class Parser
 
     static Delegate FindMethod(string name, params Type[] arguments)
     {
-        if (arguments.First().GetMethod(name, arguments) is {} methodInfo)
-            return Delegate.CreateDelegate(typeof(Delegate), methodInfo);
-
-        foreach (var func in additionalOperators[name])
+        foreach (var func in fastOperators[name])
         {
             var parameters = func.Method.GetParameters();
             if (parameters.Length == arguments.Length && parameters.Select(x => x.ParameterType).SequenceEqual(arguments))
                 return func;
         }
-        return null;
+
+        if (arguments.First().GetMethod(name, arguments) is { } methodInfo)
+        {
+            return methodInfo.GetParameters().Length switch
+            {
+                0 => () => methodInfo.Invoke(null, null),
+                1 => (object a) => methodInfo.Invoke(null, new[] { a }),
+                2 => (object a, object b) => methodInfo.Invoke(null, new[] { a, b }),
+                3 => (object a, object b, object c) => methodInfo.Invoke(null, new[] { a, b, c }),
+                4 => (object a, object b, object c, object d) => methodInfo.Invoke(null, new[] { a, b, c, d }),
+                5 => (object a, object b, object c, object d, object e) => methodInfo.Invoke(null, new[] { a, b, c, d, e }),
+            };
+        }
+        throw new ParserException($"Method {name} not found for types {string.Join(", ", arguments.Select(x => x.Name))}");
     }
 
     static IEnumerable<Delegate> FindImplicitConversions(Type type)
@@ -245,7 +264,7 @@ public class Parser
                 conversions.Add(Delegate.CreateDelegate(typeof(Delegate), method));
         }
 
-        foreach (var func in additionalOperators["op_Implicit"])
+        foreach (var func in fastOperators["op_Implicit"])
         {
             var parameters = func.Method.GetParameters();
             if (parameters.Length == 1 && parameters[0].ParameterType == type)
@@ -312,7 +331,9 @@ public class Parser
         }
         catch (Exception e)
         {
+#if DEBUG
             if (e is ParserException)
+#endif
                 throw;
         }
         throw new ParserException($"Invalid expression at: {token.StartIndex}\n{input.Substring(0, token.StartIndex)}###");
@@ -331,11 +352,27 @@ public static class Program
 
     public static void Main()
     {
-        string input = "-2 + test * 20 +20 + 2+3*4* -(5 + 6)";
-        Parser parser = new Parser(input, new() { { "test", 10 } });
-        var root = parser.Parse();
-        var instructions = parser.Compile(root);
-        Console.WriteLine($"Result: {Run(instructions)}");
+        {
+            string input = "-2 + test * 20 +20 + 2+3*4* -(5 + 6)";
+            Parser parser = new Parser(input, new() { { "test", 10 } });
+            var root = parser.Parse();
+            var instructions = parser.Compile(root);
+            Console.WriteLine($"Result: {Run(instructions)}");
+        }
+        {
+            string input = "(10 - -20) == 30 && (test * 10 == 100)";
+            Parser parser = new Parser(input, new() { { "test", 10 } });
+            var root = parser.Parse();
+            var instructions = parser.Compile(root);
+            Console.WriteLine($"Result: {Run(instructions)}");
+        }
+        {
+            string input = "\"aaa\" == \"aaa\"";
+            Parser parser = new Parser(input, new() { { "test", 10 } });
+            var root = parser.Parse();
+            var instructions = parser.Compile(root);
+            Console.WriteLine($"Result: {Run(instructions)}");
+        }
     }
 
     static object Run(List<object> flow)
