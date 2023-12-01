@@ -229,18 +229,20 @@ public class Parser
         { "op_Explicit", new Delegate[] { (float a) => (int)a, (double a) => (float)a, (int a) => (char)a } }
     };
 
-    static Delegate FindMethod(string name, params Type[] arguments)
+    record Method(Delegate Func, Type ReturnType);
+
+    static Method FindMethod(string name, params Type[] arguments)
     {
         foreach (var func in fastOperators[name])
         {
             var parameters = func.Method.GetParameters();
             if (parameters.Length == arguments.Length && parameters.Select(x => x.ParameterType).SequenceEqual(arguments))
-                return func;
+                return new(func, func.Method.ReturnType);
         }
 
         if (arguments.First().GetMethod(name, arguments) is { } methodInfo)
         {
-            return methodInfo.GetParameters().Length switch
+            return new(methodInfo.GetParameters().Length switch
             {
                 0 => () => methodInfo.Invoke(null, null),
                 1 => (object a) => methodInfo.Invoke(null, new[] { a }),
@@ -248,12 +250,12 @@ public class Parser
                 3 => (object a, object b, object c) => methodInfo.Invoke(null, new[] { a, b, c }),
                 4 => (object a, object b, object c, object d) => methodInfo.Invoke(null, new[] { a, b, c, d }),
                 5 => (object a, object b, object c, object d, object e) => methodInfo.Invoke(null, new[] { a, b, c, d, e }),
-            };
+            }, methodInfo.ReturnType);
         }
-        throw new ParserException($"Method {name} not found for types {string.Join(", ", arguments.Select(x => x.Name))}");
+        return null;
     }
 
-    static IEnumerable<Delegate> FindImplicitConversions(Type type)
+    static List<Delegate> FindImplicitConversions(Type type)
     {
         List<Delegate> conversions = new List<Delegate>();
 
@@ -274,36 +276,82 @@ public class Parser
         return conversions;
     }
 
-    Type CompileRecursive(Token token, List<object> flow)
+    CompilationResult AddMethod(string name, params CompilationResult[] arguments)
+    {
+        List<object> flow = new();
+        var func = FindMethod(name, arguments.Select(x => x.Type).ToArray());
+        if (func == null)
+        {
+            var allConversions = arguments.Select(x => FindImplicitConversions(x.Type)).ToList();
+
+            // Generate all combinations of implicit conversions
+            List<Delegate[]> combinations = new();
+            GenerateCombinations(allConversions, new Delegate[allConversions.Count], combinations, 0);
+
+            foreach (var combination in combinations)
+            {
+                func = FindMethod(name, combination.Select((x, i) => x?.Method.ReturnType ?? arguments[i].Type).ToArray());
+                if (func != null)
+                {
+                    for (int i = 0; i < combination.Length; i++)
+                    {
+                        flow.AddRange(arguments[i].Flow);
+                        if (combination[i] != null)
+                            flow.Add(combination[i]);
+                    }
+                    break;
+                }
+            }
+        }
+        else
+        {
+            flow.AddRange(arguments.SelectMany(x => x.Flow));
+        }
+
+        if (func == null)
+            throw new ParserException($"Method {name} not found for types {string.Join(", ", arguments.Select(x => x.Type.Name))}");
+
+        flow.Add(func.Func);
+        return new(func.ReturnType, flow);
+    }
+
+    void GenerateCombinations(List<List<Delegate>> allConversions, Delegate[] current, List<Delegate[]> combinations, int argIndex)
+    {
+        foreach (var argument in allConversions[argIndex].Append(null))
+        {
+            current[argIndex] = argument;
+            if (argIndex == allConversions.Count - 1)
+                combinations.Add(current.ToArray());
+            else
+                GenerateCombinations(allConversions, current, combinations, argIndex + 1);
+        }
+    }
+
+    public record CompilationResult(Type Type, List<object> Flow);
+
+    public CompilationResult Compile(Token token)
     {
         try
         {
             if (token.Type == TokenType.Literal)
             {
-                flow.Add(token.Value);
-                return token.Value.GetType();
+                return new(token.Value.GetType(), new List<object>() { token.Value });
             }
             else if (token.Type == TokenType.Reference)
             {
-                flow.Add(() => Variables[token.Value as string]);
-                return Variables[token.Value as string].GetType();
+                return new(Variables[token.Value as string].GetType(), new List<object>() { Variables[token.Value as string] });
             }
             else if (token.Type == TokenType.Block)
             {
                 var child = token.Children[0];
                 if (child.Type == TokenType.Unary)
                 {
-                    Type t1 = CompileRecursive(token.Children[1], flow);
-                    var func = FindMethod(unaryOperators[input.Substring(child.StartIndex, child.Length)], t1);
-                    if (func == null)
-                        throw new ParserException($"Unary operator {input.Substring(child.StartIndex, child.Length)} not found for type {t1}");
-
-                    flow.Add(func);
-                    return func.Method.ReturnType;
+                    CompilationResult r1 = Compile(token.Children[1]);
+                    return AddMethod(unaryOperators[input.Substring(child.StartIndex, child.Length)], r1);
                 }
                 else
                 {
-                    Type t1 = CompileRecursive(token.Children[0], flow);
+                    CompilationResult r1 = Compile(token.Children[0]);
                     for (int i = 1; i < token.Children.Count; i++)
                     {
                         child = token.Children[i];
@@ -311,21 +359,12 @@ public class Parser
                         {
                             if (child.Type == TokenType.Binary)
                             {
-
-                                Type t2 = CompileRecursive(token.Children[i + 1], flow);
-
-                                // TODO: Find implicit conversion if can't find exact match
-
-                                var func = FindMethod(binaryOperators[input.Substring(child.StartIndex, child.Length)], t1, t2);
-                                if (func == null)
-                                    throw new ParserException($"Binary operator {input.Substring(child.StartIndex, child.Length)} not found for types {t1} and {t2}");
-
-                                flow.Add(func);
-                                t1 = func.Method.ReturnType;
+                                CompilationResult r2 = Compile(token.Children[i + 1]);
+                                r1 = AddMethod(binaryOperators[input.Substring(child.StartIndex, child.Length)], r1, r2);
                             }
                         }
                     }
-                    return t1;
+                    return r1;
                 }
             }
         }
@@ -338,13 +377,6 @@ public class Parser
         }
         throw new ParserException($"Invalid expression at: {token.StartIndex}\n{input.Substring(0, token.StartIndex)}###");
     }
-
-    public List<object> Compile(Token root)
-    {
-        List<object> instructions = new();
-        CompileRecursive(root, instructions);
-        return instructions;
-    }
 }
 
 public static class Program
@@ -356,21 +388,21 @@ public static class Program
             string input = "-2 + test * 20 +20 + 2+3*4* -(5 + 6)";
             Parser parser = new Parser(input, new() { { "test", 10 } });
             var root = parser.Parse();
-            var instructions = parser.Compile(root);
+            var instructions = parser.Compile(root).Flow;
             Console.WriteLine($"Result: {Run(instructions)}");
         }
         {
-            string input = "(10 - -20) == 30 && (test * 10 == 100)";
+            string input = "(10.0 - -20) == 30 && (test * 10 == 100)";
             Parser parser = new Parser(input, new() { { "test", 10 } });
             var root = parser.Parse();
-            var instructions = parser.Compile(root);
+            var instructions = parser.Compile(root).Flow;
             Console.WriteLine($"Result: {Run(instructions)}");
         }
         {
-            string input = "\"aaa\" == \"aaa\"";
-            Parser parser = new Parser(input, new() { { "test", 10 } });
+            string input = "\"aaa\" == test";
+            Parser parser = new Parser(input, new() { { "test", "aaa" } });
             var root = parser.Parse();
-            var instructions = parser.Compile(root);
+            var instructions = parser.Compile(root).Flow;
             Console.WriteLine($"Result: {Run(instructions)}");
         }
     }
