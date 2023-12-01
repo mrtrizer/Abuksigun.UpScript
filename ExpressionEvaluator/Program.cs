@@ -26,6 +26,11 @@ public class Parser
     Stack<Token> stack = new();
     public Dictionary<string, object> Variables { get; } = new();
 
+    public class ParserException : Exception
+    {
+        public ParserException(string message) : base(message) { }
+    }
+
     public Parser(string input, Dictionary<string, object> variables)
     {
         this.input = input;
@@ -166,7 +171,7 @@ public class Parser
         {
             while (root.Children.Count > 0)
                 root = root.Children.Last();
-            throw new Exception($"Unexpect token at: {root.StartIndex + root.Length}\n{input.Substring(0, root.StartIndex)}###");
+            throw new ParserException($"Unexpect token at: {root.StartIndex + root.Length}\n{input.Substring(0, root.StartIndex)}###");
         }
         return root;
     }
@@ -266,44 +271,51 @@ public class Parser
             }
             else if (token.Type == TokenType.Block)
             {
-                Type t1 = CompileRecursive(token.Children[0], flow);
-                for (int i = 1; i < token.Children.Count; i++)
+                var child = token.Children[0];
+                if (child.Type == TokenType.Unary)
                 {
-                    var child = token.Children[i];
-                    if (child.Type == TokenType.Binary || child.Type == TokenType.Unary)
+                    Type t1 = CompileRecursive(token.Children[1], flow);
+                    var func = FindMethod(unaryOperators[input.Substring(child.StartIndex, child.Length)], t1);
+                    if (func == null)
+                        throw new ParserException($"Unary operator {input.Substring(child.StartIndex, child.Length)} not found for type {t1}");
+
+                    flow.Add(func);
+                    return func.Method.ReturnType;
+                }
+                else
+                {
+                    Type t1 = CompileRecursive(token.Children[0], flow);
+                    for (int i = 1; i < token.Children.Count; i++)
                     {
-                        if (child.Type == TokenType.Binary)
+                        child = token.Children[i];
+                        if (child.Type == TokenType.Binary || child.Type == TokenType.Unary)
                         {
-                            Type t2 = CompileRecursive(token.Children[i + 1], flow);
+                            if (child.Type == TokenType.Binary)
+                            {
 
-                            // TODO: Find implicit conversion if can't find exact match
+                                Type t2 = CompileRecursive(token.Children[i + 1], flow);
 
-                            var func = FindMethod(binaryOperators[input.Substring(child.StartIndex, child.Length)], t1, t2);
-                            if (func == null)
-                                throw new Exception($"Binary operator {input.Substring(child.StartIndex, child.Length)} not found for types {t1} and {t2}");
+                                // TODO: Find implicit conversion if can't find exact match
 
-                            flow.Add(func);
-                            t1 = func.Method.ReturnType;
-                        }
-                        else if (child.Type == TokenType.Unary)
-                        {
-                            var func = FindMethod(unaryOperators[input.Substring(child.StartIndex, child.Length)], t1);
-                            if (func == null)
-                                throw new Exception($"Unary operator {input.Substring(child.StartIndex, child.Length)} not found for type {t1}");
+                                var func = FindMethod(binaryOperators[input.Substring(child.StartIndex, child.Length)], t1, t2);
+                                if (func == null)
+                                    throw new ParserException($"Binary operator {input.Substring(child.StartIndex, child.Length)} not found for types {t1} and {t2}");
 
-                            flow.Add(func);
-                            t1 = func.Method.ReturnType;
+                                flow.Add(func);
+                                t1 = func.Method.ReturnType;
+                            }
                         }
                     }
+                    return t1;
                 }
-                return t1;
             }
         }
-        catch
+        catch (Exception e)
         {
-            throw;
+            if (e is ParserException)
+                throw;
         }
-        throw new Exception($"Invalid expression at: {token.StartIndex}\n{input.Substring(0, token.StartIndex)}###");
+        throw new ParserException($"Invalid expression at: {token.StartIndex}\n{input.Substring(0, token.StartIndex)}###");
     }
 
     public List<object> Compile(Token root)
@@ -319,7 +331,7 @@ public static class Program
 
     public static void Main()
     {
-        string input = "2 + test * 20 +20 + 2+3*4*(5 + 6)";
+        string input = "-2 + test * 20 +20 + 2+3*4* -(5 + 6)";
         Parser parser = new Parser(input, new() { { "test", 10 } });
         var root = parser.Parse();
         var instructions = parser.Compile(root);
