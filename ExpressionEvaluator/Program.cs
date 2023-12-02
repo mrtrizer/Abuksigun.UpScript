@@ -2,15 +2,7 @@
 using System.Collections.Generic;
 using System.Reflection;
 
-public enum TokenType
-{
-    Block,
-    Skip,
-    Literal,
-    Reference,
-    Binary,
-    Unary
-}
+public enum TokenType { Block, Skip, Literal, Reference, Binary, Unary }
 
 public record Token(TokenType Type, object Value, int StartIndex, int Length, List<Token> Children)
 {
@@ -21,15 +13,18 @@ public record Token(TokenType Type, object Value, int StartIndex, int Length, Li
 
 public class Parser
 {
-    readonly string input;
-    int position = 0;
-    Stack<Token> stack = new();
-    public Dictionary<string, object> Variables { get; } = new();
-
     public class ParserException : Exception
     {
         public ParserException(string message) : base(message) { }
     }
+
+    record Method(Delegate Func, Type ReturnType);
+    public record CompilationResult(Type Type, List<object> Flow);
+
+    readonly string input;
+    int position = 0;
+    Stack<Token> stack = new();
+    public Dictionary<string, object> Variables { get; } = new();
 
     public Parser(string input, Dictionary<string, object> variables)
     {
@@ -125,25 +120,9 @@ public class Parser
         return false;
     }
 
-    bool Range(char start, char end)
-    {
-        if (input.Length > position && input[position] >= start && input[position] <= end)
-        {
-            position++;
-            return true;
-        }
-        return false;
-    }
-
-    bool Character()
-    {
-        if (input.Length > position && char.IsAsciiLetter(input[position]))
-        {
-            position++;
-            return true;
-        }
-        return false;
-    }
+    bool IncPosition => position++ < input.Length;
+    bool Range(char start, char end) => input.Length > position && input[position] >= start && input[position] <= end && IncPosition;
+    bool Character() => input.Length > position && char.IsAsciiLetter(input[position]) && IncPosition;
 
     bool Digits => And(() => Range('0', '9'), () => ZeroOrMore(() => Range('0', '9')));
     bool Letter => Or(() => Range('a', 'z'), () => Range('A', 'Z'));
@@ -168,7 +147,6 @@ public class Parser
         foreach (var child in token.Children)
             PrintToken(input, child, level + 1);
     }
-
 
     public Token Parse()
     {
@@ -225,11 +203,9 @@ public class Parser
         { "op_BitwiseOr", new Delegate[] { (int a, int b) => a | b, (long a, long b) => a | b, (bool a, bool b) => a || b } }, // For int, long, and bool
         { "op_UnaryNegation", new Delegate[] { (int a) => -a, (double a) => -a, (float a) => -a, (long a) => -a } },
         { "op_LogicalNot", new Delegate[] { (bool a) => !a } }, // Only for bool
-        { "op_Implicit", new Delegate[] { (int a) => (float)a, (float a) => (double)a, (char a) => (int)a } },
+        { "op_Implicit", new Delegate[] { (int a) => (float)a, (float a) => (double)a, (char a) => (int)a, (int a) => a.ToString(), (float a) => a.ToString(), (double a) => a.ToString(), (bool a) => a.ToString() } },
         { "op_Explicit", new Delegate[] { (float a) => (int)a, (double a) => (float)a, (int a) => (char)a } }
     };
-
-    record Method(Delegate Func, Type ReturnType);
 
     static Method FindMethod(string name, params Type[] arguments)
     {
@@ -240,37 +216,37 @@ public class Parser
                 return new(func, func.Method.ReturnType);
         }
 
-        if (arguments.First().GetMethod(name, arguments) is { } methodInfo)
+        if (arguments.First().GetMethod(name, arguments) is { } method)
         {
-            return new(methodInfo.GetParameters().Length switch
+            return new(method.GetParameters().Length switch
             {
-                0 => () => methodInfo.Invoke(null, null),
-                1 => (object a) => methodInfo.Invoke(null, new[] { a }),
-                2 => (object a, object b) => methodInfo.Invoke(null, new[] { a, b }),
-                3 => (object a, object b, object c) => methodInfo.Invoke(null, new[] { a, b, c }),
-                4 => (object a, object b, object c, object d) => methodInfo.Invoke(null, new[] { a, b, c, d }),
-                5 => (object a, object b, object c, object d, object e) => methodInfo.Invoke(null, new[] { a, b, c, d, e }),
-            }, methodInfo.ReturnType);
+                0 => () => method.Invoke(null, null),
+                1 => (object a) => method.Invoke(null, new[] { a }),
+                2 => (object a, object b) => method.Invoke(null, new[] { a, b }),
+                3 => (object a, object b, object c) => method.Invoke(null, new[] { a, b, c }),
+                4 => (object a, object b, object c, object d) => method.Invoke(null, new[] { a, b, c, d }),
+                5 => (object a, object b, object c, object d, object e) => method.Invoke(null, new[] { a, b, c, d, e }),
+            }, method.ReturnType);
         }
         return null;
     }
 
-    static List<Delegate> FindImplicitConversions(Type type)
+    static List<Method> FindImplicitConversions(Type type)
     {
-        List<Delegate> conversions = new List<Delegate>();
+        List<Method> conversions = new List<Method>();
 
         var methods = type.GetMethods(BindingFlags.Public | BindingFlags.Static);
         foreach (var method in methods)
         {
             if (method.Name == "op_Implicit" && method.ReturnType != type && method.GetParameters()[0].ParameterType == type)
-                conversions.Add(Delegate.CreateDelegate(typeof(Delegate), method));
+                conversions.Add(new ((object a) => method.Invoke(null, new[] { a }), method.ReturnType));
         }
 
         foreach (var func in fastOperators["op_Implicit"])
         {
             var parameters = func.Method.GetParameters();
             if (parameters.Length == 1 && parameters[0].ParameterType == type)
-                conversions.Add(func);
+                conversions.Add(new (func, func.Method.ReturnType));
         }
 
         return conversions;
@@ -285,19 +261,19 @@ public class Parser
             var allConversions = arguments.Select(x => FindImplicitConversions(x.Type)).ToList();
 
             // Generate all combinations of implicit conversions
-            List<Delegate[]> combinations = new();
-            GenerateCombinations(allConversions, new Delegate[allConversions.Count], combinations, 0);
+            List<Method[]> combinations = new();
+            GenerateCombinations(allConversions, new Method[allConversions.Count], combinations, 0);
 
             foreach (var combination in combinations)
             {
-                func = FindMethod(name, combination.Select((x, i) => x?.Method.ReturnType ?? arguments[i].Type).ToArray());
+                func = FindMethod(name, combination.Select((x, i) => x?.ReturnType ?? arguments[i].Type).ToArray());
                 if (func != null)
                 {
                     for (int i = 0; i < combination.Length; i++)
                     {
                         flow.AddRange(arguments[i].Flow);
                         if (combination[i] != null)
-                            flow.Add(combination[i]);
+                            flow.Add(combination[i].Func);
                     }
                     break;
                 }
@@ -315,7 +291,7 @@ public class Parser
         return new(func.ReturnType, flow);
     }
 
-    void GenerateCombinations(List<List<Delegate>> allConversions, Delegate[] current, List<Delegate[]> combinations, int argIndex)
+    void GenerateCombinations(List<List<Method>> allConversions, Method[] current, List<Method[]> combinations, int argIndex)
     {
         foreach (var argument in allConversions[argIndex].Append(null))
         {
@@ -327,7 +303,6 @@ public class Parser
         }
     }
 
-    public record CompilationResult(Type Type, List<object> Flow);
 
     public CompilationResult Compile(Token token)
     {
@@ -384,22 +359,22 @@ public static class Program
 
     public static void Main()
     {
+        //{
+        //    string input = "-2 + test * 20 +20 + 2+3*4* -(5 + 6)";
+        //    Parser parser = new Parser(input, new() { { "test", 10 } });
+        //    var root = parser.Parse();
+        //    var instructions = parser.Compile(root).Flow;
+        //    Console.WriteLine($"Result: {Run(instructions)}");
+        //}
+        //{
+        //    string input = "(10.0 - -20) == 30 && (test * 10 == 100)";
+        //    Parser parser = new Parser(input, new() { { "test", 10 } });
+        //    var root = parser.Parse();
+        //    var instructions = parser.Compile(root).Flow;
+        //    Console.WriteLine($"Result: {Run(instructions)}");
+        //}
         {
-            string input = "-2 + test * 20 +20 + 2+3*4* -(5 + 6)";
-            Parser parser = new Parser(input, new() { { "test", 10 } });
-            var root = parser.Parse();
-            var instructions = parser.Compile(root).Flow;
-            Console.WriteLine($"Result: {Run(instructions)}");
-        }
-        {
-            string input = "(10.0 - -20) == 30 && (test * 10 == 100)";
-            Parser parser = new Parser(input, new() { { "test", 10 } });
-            var root = parser.Parse();
-            var instructions = parser.Compile(root).Flow;
-            Console.WriteLine($"Result: {Run(instructions)}");
-        }
-        {
-            string input = "\"aaa\" == test";
+            string input = "\"aaa\" + 10 == test + 10";
             Parser parser = new Parser(input, new() { { "test", "aaa" } });
             var root = parser.Parse();
             var instructions = parser.Compile(root).Flow;
