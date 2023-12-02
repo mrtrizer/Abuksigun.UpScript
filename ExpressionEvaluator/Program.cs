@@ -15,7 +15,7 @@ public class Parser
 {
     public class ParserException : Exception
     {
-        public ParserException(string message) : base(message) { }
+        public ParserException(string message, Exception e = null) : base(message, e) { }
     }
 
     record Method(object Func, Type ReturnType);
@@ -356,15 +356,12 @@ public class Parser
                     return r1;
                 }
             }
+            throw new ParserException($"Unexpected token type {token.Type}");
         }
         catch (Exception e)
         {
-#if DEBUG
-            if (e is ParserException)
-#endif
-                throw;
+            throw new ParserException($"Invalid expression at: {token.StartIndex}\n{input.Substring(0, token.StartIndex)}###", e);
         }
-        throw new ParserException($"Invalid expression at: {token.StartIndex}\n{input.Substring(0, token.StartIndex)}###");
     }
 }
 
