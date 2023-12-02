@@ -230,7 +230,7 @@ public class Parser
                 return new(func, func.Method.ReturnType);
         }
 
-        if (arguments.First().GetMethod(name, arguments) is { } method)
+        if (arguments[0].GetMethod(name, arguments) is { } method)
             return new(method, method.ReturnType);
         return null;
     }
@@ -264,7 +264,6 @@ public class Parser
         {
             var allConversions = arguments.Select(x => FindConversions(x.Type, "op_Implicit")).ToList();
 
-            // Generate all combinations of implicit conversions
             List<Method[]> combinations = new();
             GenerateCombinations(allConversions, new Method[allConversions.Count], combinations, 0);
 
@@ -367,26 +366,22 @@ public class Parser
 
 public static class Program
 {
-
     public static void Main()
     {
         {
-            string input = "(float)--2 / 3 + --test * 20 +20 + 2+3*4* -(5 + 6)";
-            Parser parser = new Parser(input, new() { { "test", 10 } });
+            Parser parser = new Parser("(float)--2 / 3 + --test * 20 +20 + 2+3*4* -(5 + 6)", new() { { "test", 10 } });
             var root = parser.Parse();
             var instructions = parser.Compile(root).Flow;
             Console.WriteLine($"Result: {Run(instructions)}");
         }
         {
-            string input = "(10.0 - -20) == 30 && (test * 10 == 100)";
-            Parser parser = new Parser(input, new() { { "test", 10 } });
+            Parser parser = new Parser("(10.0 - -20) == 30 && (test * 10 == 100)", new() { { "test", 10 } });
             var root = parser.Parse();
             var instructions = parser.Compile(root).Flow;
             Console.WriteLine($"Result: {Run(instructions)}");
         }
         {
-            string input = "\"aaa\" + 10 == test + 10";
-            Parser parser = new Parser(input, new() { { "test", "aaa" } });
+            Parser parser = new Parser("\"aaa\" + 10 == test + 10", new() { { "test", "aaa" } });
             var root = parser.Parse();
             var instructions = parser.Compile(root).Flow;
             Console.WriteLine($"Result: {Run(instructions)}");
