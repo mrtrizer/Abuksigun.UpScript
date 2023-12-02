@@ -18,7 +18,7 @@ public class Parser
         public ParserException(string message) : base(message) { }
     }
 
-    record Method(Delegate Func, Type ReturnType);
+    record Method(object Func, Type ReturnType);
     public record CompilationResult(Type Type, List<object> Flow);
 
     readonly string input;
@@ -155,12 +155,12 @@ public class Parser
     {
         stack.Push(new Token(TokenType.Block, null, 0, 0, new()));
         bool success = Logical;
-        var root = stack.Pop().Children.First();
+        var root = stack.Pop().Children[0];
         PrintToken(input, root);
         if (!success || root.Length != input.Length)
         {
             while (root.Children.Count > 0)
-                root = root.Children.Last();
+                root = root.Children[^1];
             throw new ParserException($"Unexpect token at: {root.StartIndex + root.Length}\n{input.Substring(0, root.StartIndex)}###");
         }
         return root;
@@ -231,17 +231,7 @@ public class Parser
         }
 
         if (arguments.First().GetMethod(name, arguments) is { } method)
-        {
-            return new(method.GetParameters().Length switch
-            {
-                0 => () => method.Invoke(null, null),
-                1 => (object a) => method.Invoke(null, new[] { a }),
-                2 => (object a, object b) => method.Invoke(null, new[] { a, b }),
-                3 => (object a, object b, object c) => method.Invoke(null, new[] { a, b, c }),
-                4 => (object a, object b, object c, object d) => method.Invoke(null, new[] { a, b, c, d }),
-                5 => (object a, object b, object c, object d, object e) => method.Invoke(null, new[] { a, b, c, d, e }),
-            }, method.ReturnType);
-        }
+            return new(method, method.ReturnType);
         return null;
     }
 
@@ -316,7 +306,6 @@ public class Parser
                 GenerateCombinations(allConversions, current, combinations, argIndex + 1);
         }
     }
-
 
     public CompilationResult Compile(Token token)
     {
@@ -414,9 +403,13 @@ public static class Program
         {
             if (item is Delegate func)
             {
-                var parameters = func.Method.GetParameters();
-                var paramsArray = parameters.Select(x => stack.Pop()).Reverse().ToArray();
+                var paramsArray = func.Method.GetParameters().Select(x => stack.Pop()).Reverse().ToArray();
                 stack.Push(func.DynamicInvoke(paramsArray));
+            }
+            else if (item is MethodInfo methodInfo)
+            {
+                var paramsArray = methodInfo.GetParameters().Select(x => stack.Pop()).Reverse().ToArray();
+                stack.Push(methodInfo.Invoke(null, paramsArray));
             }
             else
             {
