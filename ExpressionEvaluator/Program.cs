@@ -370,20 +370,17 @@ public static class Program
     {
         {
             Parser parser = new Parser("(float)--2 / 3 + --test * 20 +20 + 2+3*4* -(5 + 6)", new() { { "test", 10 } });
-            var root = parser.Parse();
-            var instructions = parser.Compile(root).Flow;
+            var instructions = parser.Compile(parser.Parse()).Flow;
             Console.WriteLine($"Result: {Run(instructions)}");
         }
         {
             Parser parser = new Parser("(10.0 - -20) == 30 && (test * 10 == 100)", new() { { "test", 10 } });
-            var root = parser.Parse();
-            var instructions = parser.Compile(root).Flow;
+            var instructions = parser.Compile(parser.Parse()).Flow;
             Console.WriteLine($"Result: {Run(instructions)}");
         }
         {
             Parser parser = new Parser("\"aaa\" + 10 == test + 10", new() { { "test", "aaa" } });
-            var root = parser.Parse();
-            var instructions = parser.Compile(root).Flow;
+            var instructions = parser.Compile(parser.Parse()).Flow;
             Console.WriteLine($"Result: {Run(instructions)}");
         }
     }
