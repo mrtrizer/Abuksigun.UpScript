@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using System.Reflection;
 
-public enum TokenType { Block, Skip, Literal, Reference, Binary, Unary }
+public enum TokenType { Block, Skip, Literal, Reference, Binary, Unary, ExplicitConversion }
 
 public record Token(TokenType Type, object Value, int StartIndex, int Length, List<Token> Children)
 {
@@ -131,10 +131,12 @@ public class Parser
     bool NumberLiteral => Or(() => Float, () => Integer);
     bool BoolLiteral => Block(() => Or(() => Match("true"), () => Match("false")), TokenType.Literal, x => bool.Parse(x));
     bool StringLiteral => Block(() => And(() => Match("\""), () => ZeroOrMore(() => Character()), () => Match("\"")), TokenType.Literal, x => x[1..^1]);
+    bool Identifier => Block(() => And(() => Letter, () => ZeroOrMore(() => Or(() => Letter, () => Range('0', '9')))));
 
-    bool Reference => Block(() => And(() => Letter, () => ZeroOrMore(() => Or(() => Letter, () => Range('0', '9')))), TokenType.Reference, x => x);
+    bool ExplicitConversion => Block(() => And(() => Block(() => And(() => Match("("), () => Space(), () => Identifier, () => Space(), () => Match(")")), TokenType.ExplicitConversion, (x) => x[1..^1].Trim()), () => Factor));
+    bool Reference => Block(() => Identifier, TokenType.Reference, x => x);
     bool BracketBlock => Block(() => And(() => Match("("), () => Logical, () => Match(")")));
-    bool Factor => Block(() => And(() => Space(), () => Or(() => Match("-", TokenType.Unary), () => Match("!", TokenType.Unary), () => true), () => Or(() => NumberLiteral, () => StringLiteral, () => BoolLiteral, () => Reference, () => BracketBlock) && Space()));
+    bool Factor => Block(() => And(() => Space(), () => Or(() => Match("-", TokenType.Unary), () => Match("!", TokenType.Unary), () => true), () => Or(() => ExplicitConversion, () => NumberLiteral, () => StringLiteral, () => BoolLiteral, () => Reference, () => BracketBlock) && Space()));
     
     bool Term => Block(() => And(() => Factor, () => ZeroOrMore(() => Or(() => Match("*", TokenType.Binary), () => Match("/", TokenType.Binary), () => Match("%", TokenType.Binary)), () => Factor)));
     bool Expression => Block(() => And(() => Term, () => ZeroOrMore(() => Or(() => Match("+", TokenType.Binary), () => Match("-", TokenType.Binary)), () => Term)));
@@ -207,6 +209,17 @@ public class Parser
         { "op_Explicit", new Delegate[] { (float a) => (int)a, (double a) => (float)a, (int a) => (char)a } }
     };
 
+    static Dictionary<string, Type> typesMap = new()
+    {
+        { "int", typeof(int) },
+        { "float", typeof(float) },
+        { "double", typeof(double) },
+        { "long", typeof(long) },
+        { "bool", typeof(bool) },
+        { "string", typeof(string) },
+        { "char", typeof(char) },
+    };
+
     static Method FindMethod(string name, params Type[] arguments)
     {
         foreach (var func in fastOperators[name])
@@ -231,18 +244,18 @@ public class Parser
         return null;
     }
 
-    static List<Method> FindImplicitConversions(Type type)
+    static List<Method> FindConversions(Type type, string name)
     {
         List<Method> conversions = new List<Method>();
 
         var methods = type.GetMethods(BindingFlags.Public | BindingFlags.Static);
         foreach (var method in methods)
         {
-            if (method.Name == "op_Implicit" && method.ReturnType != type && method.GetParameters()[0].ParameterType == type)
+            if (method.Name == name && method.ReturnType != type && method.GetParameters()[0].ParameterType == type)
                 conversions.Add(new ((object a) => method.Invoke(null, new[] { a }), method.ReturnType));
         }
 
-        foreach (var func in fastOperators["op_Implicit"])
+        foreach (var func in fastOperators[name])
         {
             var parameters = func.Method.GetParameters();
             if (parameters.Length == 1 && parameters[0].ParameterType == type)
@@ -258,7 +271,7 @@ public class Parser
         var func = FindMethod(name, arguments.Select(x => x.Type).ToArray());
         if (func == null)
         {
-            var allConversions = arguments.Select(x => FindImplicitConversions(x.Type)).ToList();
+            var allConversions = arguments.Select(x => FindConversions(x.Type, "op_Implicit")).ToList();
 
             // Generate all combinations of implicit conversions
             List<Method[]> combinations = new();
@@ -293,7 +306,7 @@ public class Parser
 
     void GenerateCombinations(List<List<Method>> allConversions, Method[] current, List<Method[]> combinations, int argIndex)
     {
-        foreach (var argument in allConversions[argIndex].Append(null))
+        foreach (var argument in allConversions[argIndex].Prepend(null))
         {
             current[argIndex] = argument;
             if (argIndex == allConversions.Count - 1)
@@ -319,7 +332,18 @@ public class Parser
             else if (token.Type == TokenType.Block)
             {
                 var child = token.Children[0];
-                if (child.Type == TokenType.Unary)
+
+                if (child.Type == TokenType.ExplicitConversion)
+                {
+                    CompilationResult r1 = Compile(token.Children[1]);
+                    var type = typesMap[child.Value as string];
+                    var method = FindConversions(r1.Type, $"op_Explicit").FirstOrDefault(x => x.ReturnType == type);
+                    method ??= FindConversions(r1.Type, $"op_Implicit").FirstOrDefault(x => x.ReturnType == type);
+                    if (method == null)
+                        throw new ParserException($"There is no explicit conversion for type {r1.Type.Name} into type {child.Value as string}");
+                    return new(method.ReturnType, r1.Flow.Append(method.Func).ToList());
+                } 
+                else if (child.Type == TokenType.Unary)
                 {
                     CompilationResult r1 = Compile(token.Children[1]);
                     return AddMethod(unaryOperators[input.Substring(child.StartIndex, child.Length)], r1);
@@ -359,20 +383,20 @@ public static class Program
 
     public static void Main()
     {
-        //{
-        //    string input = "-2 + test * 20 +20 + 2+3*4* -(5 + 6)";
-        //    Parser parser = new Parser(input, new() { { "test", 10 } });
-        //    var root = parser.Parse();
-        //    var instructions = parser.Compile(root).Flow;
-        //    Console.WriteLine($"Result: {Run(instructions)}");
-        //}
-        //{
-        //    string input = "(10.0 - -20) == 30 && (test * 10 == 100)";
-        //    Parser parser = new Parser(input, new() { { "test", 10 } });
-        //    var root = parser.Parse();
-        //    var instructions = parser.Compile(root).Flow;
-        //    Console.WriteLine($"Result: {Run(instructions)}");
-        //}
+        {
+            string input = "(float)--2 / 3 + test * 20 +20 + 2+3*4* -(5 + 6)";
+            Parser parser = new Parser(input, new() { { "test", 10 } });
+            var root = parser.Parse();
+            var instructions = parser.Compile(root).Flow;
+            Console.WriteLine($"Result: {Run(instructions)}");
+        }
+        {
+            string input = "(10.0 - -20) == 30 && (test * 10 == 100)";
+            Parser parser = new Parser(input, new() { { "test", 10 } });
+            var root = parser.Parse();
+            var instructions = parser.Compile(root).Flow;
+            Console.WriteLine($"Result: {Run(instructions)}");
+        }
         {
             string input = "\"aaa\" + 10 == test + 10";
             Parser parser = new Parser(input, new() { { "test", "aaa" } });
