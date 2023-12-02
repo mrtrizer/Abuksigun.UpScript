@@ -327,8 +327,8 @@ public class Parser
                 {
                     CompilationResult r1 = Compile(token.Children[1]);
                     var type = typesMap[child.Value as string];
-                    var method = FindConversions(r1.Type, $"op_Explicit").FirstOrDefault(x => x.ReturnType == type);
-                    method ??= FindConversions(r1.Type, $"op_Implicit").FirstOrDefault(x => x.ReturnType == type);
+                    var method = FindConversions(r1.Type, $"op_Explicit").Find(x => x.ReturnType == type);
+                    method ??= FindConversions(r1.Type, $"op_Implicit").Find(x => x.ReturnType == type);
                     if (method == null)
                         throw new ParserException($"There is no explicit conversion for type {r1.Type.Name} into type {child.Value as string}");
                     return new(method.ReturnType, r1.Flow.Append(method.Func).ToList());
