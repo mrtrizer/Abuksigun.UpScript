@@ -136,8 +136,9 @@ public class Parser
     bool ExplicitConversion => Block(() => And(() => Block(() => And(() => Match("("), () => Space(), () => Identifier, () => Space(), () => Match(")")), TokenType.ExplicitConversion, (x) => x[1..^1].Trim()), () => Factor));
     bool Reference => Block(() => Identifier, TokenType.Reference, x => x);
     bool BracketBlock => Block(() => And(() => Match("("), () => Logical, () => Match(")")));
-    bool Factor => Block(() => And(() => Space(), () => Or(() => Match("-", TokenType.Unary), () => Match("!", TokenType.Unary), () => true), () => Or(() => ExplicitConversion, () => NumberLiteral, () => StringLiteral, () => BoolLiteral, () => Reference, () => BracketBlock) && Space()));
+    bool Factor => Block(() => And(() => Space(), ()=> Unary,() => Space()));
     
+    bool Unary => Block(() => And(() => Or(() => Match("-", TokenType.Unary), () => Match("!", TokenType.Unary), () => true), () => Or(() => ExplicitConversion, () => NumberLiteral, () => StringLiteral, () => BoolLiteral, () => Reference, () => BracketBlock, ()=> Unary)));
     bool Term => Block(() => And(() => Factor, () => ZeroOrMore(() => Or(() => Match("*", TokenType.Binary), () => Match("/", TokenType.Binary), () => Match("%", TokenType.Binary)), () => Factor)));
     bool Expression => Block(() => And(() => Term, () => ZeroOrMore(() => Or(() => Match("+", TokenType.Binary), () => Match("-", TokenType.Binary)), () => Term)));
     bool Comparison => Block(() => And(() => Expression, () => ZeroOrMore(() => Or(() => Match("<", TokenType.Binary), () => Match("<=", TokenType.Binary), () => Match(">", TokenType.Binary), () => Match(">=", TokenType.Binary), () => Match("==", TokenType.Binary), () => Match("!=", TokenType.Binary)), () => Expression)));
@@ -384,7 +385,7 @@ public static class Program
     public static void Main()
     {
         {
-            string input = "(float)--2 / 3 + test * 20 +20 + 2+3*4* -(5 + 6)";
+            string input = "(float)--2 / 3 + --test * 20 +20 + 2+3*4* -(5 + 6)";
             Parser parser = new Parser(input, new() { { "test", 10 } });
             var root = parser.Parse();
             var instructions = parser.Compile(root).Flow;
