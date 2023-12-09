@@ -1,8 +1,9 @@
 ﻿using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
 
-public enum TokenType { Block, Skip, Literal, Reference, Binary, Unary, ExplicitConversion, Function }
+public enum TokenType { Block, Skip, Literal, Reference, Binary, Unary, ExplicitConversion, Function, Index }
 
 public record Token(TokenType Type, object Value, int StartIndex, int Length, List<Token> Children)
 {
@@ -136,14 +137,16 @@ public class Parser
     bool StringLiteral => Block(() => And(() => Match("\""), () => ZeroOrMore(() => Character()), () => Match("\"")), TokenType.Literal, x => x[1..^1]);
     bool Identifier => Block(() => And(() => Letter, () => ZeroOrMore(() => Or(() => Letter, () => Range('0', '9')))));
 
+    // Recursion like Func()() or Index[][] are not supported yet
     bool Function => Block(() => And(() => Reference, () => Match("("), () => Or(() => Match(")"), () => And(() => ZeroOrMore(() => Logical, () => Match(",")), () => Logical, () => Match(")")))), TokenType.Function);
+    bool Index => Block(() => And(() => Reference, () => Match("["), () => Logical, () => Match("]")), TokenType.Index);
 
     bool ExplicitConversion => Block(() => And(() => Block(() => And(() => Match("("), () => Space(), () => Identifier, () => Space(), () => Match(")")), TokenType.ExplicitConversion, (x) => x[1..^1].Trim()), () => Factor));
     bool Reference => Block(() => Identifier, TokenType.Reference, x => x);
     bool BracketBlock => Block(() => And(() => Match("("), () => Logical, () => Match(")")));
     bool Factor => Block(() => And(() => Space(), () => Or(() => BlockValue, () => Unary), () => Space()));
-    
-    bool BlockValue => Block(() => Or(() => ExplicitConversion, () => NumberLiteral, () => StringLiteral, () => BoolLiteral, () => Function, () => Reference, () => BracketBlock));
+
+    bool BlockValue => Block(() => Or(() => ExplicitConversion, () => NumberLiteral, () => StringLiteral, () => BoolLiteral, () => Function, () => Index, () => Reference, () => BracketBlock));
 
     bool Unary => Block(() => And(() => Or(() => Match("-", TokenType.Unary), () => Match("!", TokenType.Unary)), () => Or(() => BlockValue, () => Unary)));
     bool Term => Block(() => And(() => Factor, () => ZeroOrMore(() => Or(() => Match("*", TokenType.Binary), () => Match("/", TokenType.Binary), () => Match("%", TokenType.Binary)), () => Factor)));
@@ -215,6 +218,7 @@ public class Parser
         { "op_LogicalNot", new Delegate[] { (bool a) => !a } }, // Only for bool
         { "op_Implicit", new Delegate[] { (int a) => (float)a, (float a) => (double)a, (char a) => (int)a, (int a) => a.ToString(), (float a) => a.ToString(), (double a) => a.ToString(), (bool a) => a.ToString() } },
         { "op_Explicit", new Delegate[] { (float a) => (int)a, (double a) => (float)a, (int a) => (char)a } },
+        { "get_Item", new Delegate[] { (int[] a, int index) => a[index] } },
         { "abc", new Delegate[] { (int a) => a } },
         { "max", new Delegate[] { (int a, int b) => Math.Max(a, b) } },
     };
@@ -327,6 +331,10 @@ public class Parser
                 var name = token.Children[0].Value as string;
                 return AddMethod(name, token.Children.Skip(1).Select(x => Compile(x)).ToArray());
             }
+            else if (token.Type == TokenType.Index)
+            {
+                return AddMethod("get_Item", Compile(token.Children[0]), Compile(token.Children[1]));
+            }
             else if (token.Type == TokenType.Block)
             {
                 var child = token.Children[0];
@@ -402,13 +410,28 @@ public static class Program
 
     public static void Main()
     {
-        //{
-        //    Parser parser = new Parser("abc(10)", new() { { "test", 10 } });
-        //    var instructions = parser.Compile(parser.Parse()).Flow;
-        //    Console.WriteLine($"Result: {Run(instructions)}");
-        //}
         {
-            Parser parser = new Parser("(float)--2 / 3 + abc(50) + --test * max(10, 20) +20 + 2+3*4* -(5 + 6)", new() { { "test", 10 } });
+            Parser parser = new Parser("test", new() { { "test", 10 } });
+            var instructions = parser.Compile(parser.Parse()).Flow;
+            Console.WriteLine($"Result: {Run(instructions)}");
+        }
+        {
+            Parser parser = new Parser("test[10]", new() { { "test", Enumerable.Range(0, 30).ToArray() } });
+            var instructions = parser.Compile(parser.Parse()).Flow;
+            Console.WriteLine($"Result: {Run(instructions)}");
+        }
+        {
+            Parser parser = new Parser("test[test[10]]", new() { { "test", Enumerable.Range(0, 30).ToArray() } });
+            var instructions = parser.Compile(parser.Parse()).Flow;
+            Console.WriteLine($"Result: {Run(instructions)}");
+        }
+        {
+            Parser parser = new Parser("max(abc(10), abc(20))", new() { { "test", 10 } });
+            var instructions = parser.Compile(parser.Parse()).Flow;
+            Console.WriteLine($"Result: {Run(instructions)}");
+        }
+        {
+            Parser parser = new Parser("(float)--2 / 3 + abc(50) + --test * max(10, 20 * 20) +20 + 2+3*4* -(5 + 6)", new() { { "test", 10 } });
             var instructions = parser.Compile(parser.Parse()).Flow;
             Console.WriteLine($"Result: {Run(instructions)}");
         }
