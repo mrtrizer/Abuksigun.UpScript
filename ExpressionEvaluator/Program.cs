@@ -338,7 +338,7 @@ public class Parser
                 if (tokens.Count - 1 > parentI && tokens[parentI + 1].Type == TokenType.Function && fastOperators.ContainsKey(token.Value as string))
                     result = AddMethod(token.Value as string, tokens[++parentI].Children.Select(Compile).ToArray());
                 else
-                    result = new(Variables[token.Value as string].GetType(), new List<object>() { Variables[token.Value as string] });
+                    result = new(Variables[token.Value as string].GetType(), new List<object>() { () => Variables[token.Value as string] });
             }
             else if (token.Type == TokenType.Block)
             {
@@ -386,7 +386,7 @@ public class Parser
                 if (nextTokenType == TokenType.Index)
                     result = AddMethod("get_Item", args);
                 if (nextTokenType == TokenType.Function)
-                    result = new CompilationResult(typeof(Delegate), args.SelectMany(x => x.Flow).Append(new RunDelegate(args.Length)).ToList());
+                    result = new CompilationResult(typeof(Delegate), args.SelectMany(x => x.Flow).Append(new RunDelegate(args.Length - 1)).ToList());
             }
 
             if (result != null)
@@ -437,12 +437,12 @@ public static class Program
 
     public static void Main()
     {
-        //{
-        //    int dummyI = 0;
-        //    Parser parser = new Parser("test", new() { { "test", 10 } });
-        //    var instructions = parser.Compile(new List<Token>() { parser.Parse() }, ref dummyI).Flow;
-        //    Console.WriteLine($"Result: {Run(instructions)}");
-        //}
+        {
+            int dummyI = 0;
+            Parser parser = new Parser("test", new() { { "test", 10 } });
+            var instructions = parser.Compile(new List<Token>() { parser.Parse() }, ref dummyI).Flow;
+            Console.WriteLine($"Result: {Run(instructions)}");
+        }
         {
             int dummyI = 0;
             Parser parser = new Parser("test[10]", new() { { "test", Enumerable.Range(0, 30).ToArray() } });
@@ -461,25 +461,25 @@ public static class Program
             Console.WriteLine($"Result: {Run(instructions)}");
         }
         {
-            Parser parser = new Parser("test", new() { { "test", () => 100 } });
+            Parser parser = new Parser("test()", new() { { "test", () => 100 } });
             var instructions = parser.Compile(parser.Parse()).Flow;
             Console.WriteLine($"Result: {Run(instructions)}");
         }
-        //{
-        //    Parser parser = new Parser("(float)--2 / 3 + abc(50) + --test * max(10, 20 * 20) +20 + 2+3*4* -(5 + 6)", new() { { "test", 10 } });
-        //    var instructions = parser.Compile(parser.Parse()).Flow;
-        //    Console.WriteLine($"Result: {Run(instructions)}");
-        //}
-        //{
-        //    Parser parser = new Parser("(10.0 - -20) == 30 && (test * 10 == 100)", new() { { "test", 10 } });
-        //    var instructions = parser.Compile(parser.Parse()).Flow;
-        //    Console.WriteLine($"Result: {Run(instructions)}");
-        //}
-        //{
-        //    Parser parser = new Parser("\"aaa\" + 10 == test + 10", new() { { "test", "aaa" } });
-        //    var instructions = parser.Compile(parser.Parse()).Flow;
-        //    Console.WriteLine($"Result: {Run(instructions)}");
-        //}
+        {
+            Parser parser = new Parser("(float)--2 / 3 + abc(50) + --test * max(10, 20 * 20) +20 + 2+3*4* -(5 + 6)", new() { { "test", 10 } });
+            var instructions = parser.Compile(parser.Parse()).Flow;
+            Console.WriteLine($"Result: {Run(instructions)}");
+        }
+        {
+            Parser parser = new Parser("(10.0 - -20) == 30 && (test * 10 == 100)", new() { { "test", 10 } });
+            var instructions = parser.Compile(parser.Parse()).Flow;
+            Console.WriteLine($"Result: {Run(instructions)}");
+        }
+        {
+            Parser parser = new Parser("\"aaa\" + 10 == test + 10", new() { { "test", "aaa" } });
+            var instructions = parser.Compile(parser.Parse()).Flow;
+            Console.WriteLine($"Result: {Run(instructions)}");
+        }
     }
 
 }
