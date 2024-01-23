@@ -1,0 +1,9 @@
+{
+  "name": "com.abuksigun.upscript",
+  "version": "0.1.0",
+  "displayName": "Abuksigun.UpScript",
+  "description": "Scripting language made for SiegeUp RTS.",
+  "unity": "2021.3",
+  "license": "MIT",
+  "type": "visible"
+}
