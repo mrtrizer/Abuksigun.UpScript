@@ -18,11 +18,11 @@ using FloatBoolFunc = System.Func<float, float, bool>;
 using LongBoolFunc = System.Func<long, long, bool>;
 using CharBoolFunc = System.Func<char, char, bool>;
 using StringBoolFunc = System.Func<string, string, bool>;
-
+using UnityEngine;
 
 namespace Abuksigun.UpScript
 {
-    public enum TokenType { Block, Skip, Literal, Reference, Binary, Unary, ExplicitConversion, Function, Index }
+    public enum TokenType { Block, Skip, Literal, Reference, Binary, Unary, ExplicitConversion, Function, Constructor, Index }
 
     public record Token(TokenType Type, object Value, int StartIndex, int Length, List<Token> Children)
     {
@@ -158,6 +158,7 @@ namespace Abuksigun.UpScript
         bool StringLiteral => Block(() => And(() => Match("\""), () => ZeroOrMore(() => Character()), () => Match("\"")), TokenType.Literal, x => x[1..^1]);
         bool Identifier => Block(() => And(() => Letter, () => ZeroOrMore(() => Or(() => Letter, () => Range('0', '9')))));
 
+        bool Constructor => Block(() => And(() => Match("new"), () => Space(), () => Reference, () => Space(), () => Function), TokenType.Constructor);
         bool Function => Block(() => And(() => Match("("), () => Or(() => Match(")"), () => And(() => ZeroOrMore(() => Logical, () => Match(",")), () => Logical, () => Match(")")))), TokenType.Function);
         bool Index => Block(() => And(() => Match("["), () => Logical, () => Match("]")), TokenType.Index);
 
@@ -166,7 +167,7 @@ namespace Abuksigun.UpScript
         bool BracketBlock => Block(() => And(() => Match("("), () => Logical, () => Match(")")));
         bool Factor => Block(() => And(() => Space(), () => Or(() => BlockValue, () => Unary), () => Space()));
 
-        bool BlockValue => Block(() => And(() => Or(() => ExplicitConversion, () => NumberLiteral, () => StringLiteral, () => BoolLiteral, () => Reference, () => BracketBlock), () => ZeroOrMore(() => Or(() => Function, () => Index))));
+        bool BlockValue => Block(() => And(() => Or(() => ExplicitConversion, () => NumberLiteral, () => StringLiteral, () => BoolLiteral, () => Constructor, () => Reference, () => BracketBlock), () => ZeroOrMore(() => Or(() => Function, () => Index))));
 
         bool Unary => Block(() => And(() => Or(() => Match("-", TokenType.Unary), () => Match("!", TokenType.Unary)), () => Or(() => BlockValue, () => Unary)));
         bool Term => Block(() => And(() => Factor, () => ZeroOrMore(() => Or(() => Match("*", TokenType.Binary), () => Match("/", TokenType.Binary), () => Match("%", TokenType.Binary)), () => Factor)));
@@ -253,6 +254,7 @@ namespace Abuksigun.UpScript
             { "bool", typeof(bool) },
             { "string", typeof(string) },
             { "char", typeof(char) },
+            { "Vector3", typeof(Vector3) },
         };
 
         static Method FindMethod(string name, params Type[] arguments)
@@ -397,6 +399,13 @@ namespace Abuksigun.UpScript
                         result = r1;
                     }
                 }
+                else if (token.Type == TokenType.Constructor)
+                {
+                    var typeName = token.Children[0].Value as string;
+                    var type = typesMap[typeName];
+                    var args = token.Children[1].Children.Select(Compile).ToArray();
+                    result = new CompilationResult(type, args.SelectMany(x => x.Flow).Append(type.GetConstructor(args.Select(x => x.Type).ToArray())).ToList());
+                }
 
                 while (tokens.Count - 1 > parentI && (tokens[parentI + 1].Type == TokenType.Index || tokens[parentI + 1].Type == TokenType.Function))
                 {
@@ -444,6 +453,11 @@ namespace Abuksigun.UpScript
                     func = stack.Pop() as Delegate;
                     var paramsArray = Enumerable.Range(0, runDelegate.ArgsN).Select(x => stack.Pop()).ToArray();
                     stack.Push(func.DynamicInvoke(paramsArray));
+                }
+                else if (item is ConstructorInfo constructor)
+                {
+                    var paramsArray = Enumerable.Range(0, constructor.GetParameters().Length).Select(x => stack.Pop()).Reverse().ToArray();
+                    stack.Push(constructor.Invoke(paramsArray));
                 }
                 else
                 {

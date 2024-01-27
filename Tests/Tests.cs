@@ -5,13 +5,19 @@ using System;
 using UnityEngine;
 using System.Linq;
 
-namespace Abuksigun.UpScript.Tests    
+namespace Abuksigun.UpScript.Tests
 {
     public class Tests
     {
         [Test]
         public void Test()
         {
+            {
+                int dummyI = 0;
+                Parser parser = new Parser("new Vector3(1,test,3)", new() { { "test", 10 } });
+                var instructions = parser.Compile(new List<Token>() { parser.Parse() }, ref dummyI).Flow;
+                Assert.AreEqual(new Vector3(1,10,3), ExpressionEvaluator.Run(instructions));
+            }
             {
                 int dummyI = 0;
                 Parser parser = new Parser("test", new() { { "test", 10 } });
