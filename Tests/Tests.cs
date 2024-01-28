@@ -14,6 +14,24 @@ namespace Abuksigun.UpScript.Tests
         {
             {
                 int dummyI = 0;
+                Parser parser = new Parser("(Vector3.one * 2).y", new() { { "test", new Vector3(1, 2, 3) } });
+                var instructions = parser.Compile(new List<Token>() { parser.Parse() }, ref dummyI).Flow;
+                Assert.AreEqual(2, ExpressionEvaluator.Run(instructions));
+            }
+            {
+                int dummyI = 0;
+                Parser parser = new Parser("new Vector3(2, 2, 2).y * 2", new() { { "test", new Vector3(1, 2, 3) } });
+                var instructions = parser.Compile(new List<Token>() { parser.Parse() }, ref dummyI).Flow;
+                Assert.AreEqual(4, ExpressionEvaluator.Run(instructions));
+            }
+            {
+                int dummyI = 0;
+                Parser parser = new Parser("test.y", new() { { "test", new Vector3(1, 2, 3) } });
+                var instructions = parser.Compile(new List<Token>() { parser.Parse() }, ref dummyI).Flow;
+                Assert.AreEqual(2, ExpressionEvaluator.Run(instructions));
+            }
+            {
+                int dummyI = 0;
                 Parser parser = new Parser("new Vector3(1,test,3)", new() { { "test", 10 } });
                 var instructions = parser.Compile(new List<Token>() { parser.Parse() }, ref dummyI).Flow;
                 Assert.AreEqual(new Vector3(1,10,3), ExpressionEvaluator.Run(instructions));

@@ -19,10 +19,12 @@ using LongBoolFunc = System.Func<long, long, bool>;
 using CharBoolFunc = System.Func<char, char, bool>;
 using StringBoolFunc = System.Func<string, string, bool>;
 using UnityEngine;
+using System.Text;
+using System.Runtime.CompilerServices;
 
 namespace Abuksigun.UpScript
 {
-    public enum TokenType { Block, Skip, Literal, Reference, Binary, Unary, ExplicitConversion, Function, Constructor, Index }
+    public enum TokenType { Block, Skip, Literal, Reference, MemberReference, Binary, Unary, ExplicitConversion, Function, Constructor, Index }
 
     public record Token(TokenType Type, object Value, int StartIndex, int Length, List<Token> Children)
     {
@@ -164,10 +166,11 @@ namespace Abuksigun.UpScript
 
         bool ExplicitConversion => Block(() => And(() => Block(() => And(() => Match("("), () => Space(), () => Identifier, () => Space(), () => Match(")")), TokenType.ExplicitConversion, (x) => x[1..^1].Trim()), () => Factor));
         bool Reference => Block(() => Identifier, TokenType.Reference, x => x);
+        bool MemberReference => Block(() => And(() => Match("."), () => Identifier), TokenType.MemberReference, x => x.Trim('.'));
         bool BracketBlock => Block(() => And(() => Match("("), () => Logical, () => Match(")")));
         bool Factor => Block(() => And(() => Space(), () => Or(() => BlockValue, () => Unary), () => Space()));
 
-        bool BlockValue => Block(() => And(() => Or(() => ExplicitConversion, () => NumberLiteral, () => StringLiteral, () => BoolLiteral, () => Constructor, () => Reference, () => BracketBlock), () => ZeroOrMore(() => Or(() => Function, () => Index))));
+        bool BlockValue => Block(() => And(() => Or(() => ExplicitConversion, () => NumberLiteral, () => StringLiteral, () => BoolLiteral, () => Constructor, () => Reference, () => BracketBlock), () => ZeroOrMore(() => Or(() => MemberReference, () => Function, () => Index))));
 
         bool Unary => Block(() => And(() => Or(() => Match("-", TokenType.Unary), () => Match("!", TokenType.Unary)), () => Or(() => BlockValue, () => Unary)));
         bool Term => Block(() => And(() => Factor, () => ZeroOrMore(() => Or(() => Match("*", TokenType.Binary), () => Match("/", TokenType.Binary), () => Match("%", TokenType.Binary)), () => Factor)));
@@ -175,11 +178,13 @@ namespace Abuksigun.UpScript
         bool Comparison => Block(() => And(() => Expression, () => ZeroOrMore(() => Or(() => Match("<", TokenType.Binary), () => Match("<=", TokenType.Binary), () => Match(">", TokenType.Binary), () => Match(">=", TokenType.Binary), () => Match("==", TokenType.Binary), () => Match("!=", TokenType.Binary)), () => Expression)));
         bool Logical => Block(() => And(() => Comparison, () => ZeroOrMore(() => Or(() => Match("&&", TokenType.Binary), () => Match("||", TokenType.Binary)), () => Comparison)));
 
-        static void PrintToken(string input, Token token, int level = 0)
+        static string TokenToString(string input, Token token, int level = 0)
         {
-            Console.WriteLine($"{new string(' ', level * 2)}{token.Type} {input.Substring(token.StartIndex, token.Length)}");
+            var stringBuilder = new StringBuilder();
+            stringBuilder.AppendLine($"{new string(' ', level * 2)}{token.Type} {input.Substring(token.StartIndex, token.Length)}");
             foreach (var child in token.Children)
-                PrintToken(input, child, level + 1);
+                stringBuilder.Append(TokenToString(input, child, level + 1));
+            return stringBuilder.ToString();
         }
 
         public Token Parse()
@@ -187,12 +192,12 @@ namespace Abuksigun.UpScript
             stack.Push(new Token(TokenType.Block, null, 0, 0, new()));
             bool success = Logical;
             var root = stack.Pop().Children[0];
-            PrintToken(input, root);
             if (!success || root.Length != input.Length)
             {
+                string currentTokensString = TokenToString(input, root);
                 while (root.Children.Count > 0)
                     root = root.Children[^1];
-                throw new ParserException($"Unexpect token at: {root.StartIndex + root.Length}\n{input.Substring(0, root.StartIndex)}###");
+                throw new ParserException($"Unexpect token at: {root.StartIndex + root.Length}\n{input.Substring(0, root.StartIndex)}###\n{currentTokensString}");
             }
             return root;
         }
@@ -337,6 +342,15 @@ namespace Abuksigun.UpScript
             }
         }
 
+        static MethodInfo[] GetExtensionMethods(Type type, string name)
+        {
+            return AppDomain.CurrentDomain.GetAssemblies().SelectMany(x => x.GetTypes())
+                .Where(x => x.IsSealed && !x.IsGenericType && !x.IsNested)
+                .SelectMany(x => x.GetMethods(BindingFlags.Static | BindingFlags.Public)
+                .Where(x => x.Name == name && x.IsDefined(typeof(ExtensionAttribute), false) && x.GetParameters()[0].ParameterType == type))
+                .ToArray();
+        }
+
         public CompilationResult Compile(Token token)
         {
             int dummyI = 0;
@@ -359,8 +373,12 @@ namespace Abuksigun.UpScript
                 {
                     if (tokens.Count - 1 > parentI && tokens[parentI + 1].Type == TokenType.Function && fastOperators.ContainsKey(token.Value as string))
                         result = AddMethod(token.Value as string, tokens[++parentI].Children.Select(Compile).ToArray());
+                    else if (Variables.TryGetValue(token.Value as string, out var variable))
+                        result = new(variable.GetType(), new() { new Func<object>(() => Variables[token.Value as string]) });
+                    else if (typesMap.TryGetValue(token.Value as string, out var type))
+                        result = new(type, new() { type });
                     else
-                        result = new(Variables[token.Value as string].GetType(), new List<object>() { new Func<object>(() => Variables[token.Value as string]) });
+                        throw new ParserException($"Type or variable {token.Value as string} not found");
                 }
                 else if (token.Type == TokenType.Block)
                 {
@@ -394,6 +412,33 @@ namespace Abuksigun.UpScript
                                 i++;
                                 CompilationResult r2 = Compile(token.Children, ref i);
                                 r1 = AddMethod(binaryOperators[input.Substring(child.StartIndex, child.Length)], r1, r2);
+                            }
+                            else if (child.Type == TokenType.MemberReference)
+                            {
+                                var memberName = child.Value as string;
+                                bool staticMember = r1.Flow.Last() is Type;
+                                var members = r1.Type.GetMember(memberName, BindingFlags.Public | (staticMember ? BindingFlags.Static : BindingFlags.Instance));
+                                var methods = members.Where(x => x is MethodInfo).Cast<MethodInfo>().ToList();
+                                if (methods.Any())
+                                {
+                                    if (!staticMember)
+                                        methods.AddRange(GetExtensionMethods(r1.Type, memberName));
+                                    var arguments = token.Children[++i].Children.Select(Compile);
+                                    var argumentTypes = arguments.Select(x => x.Type).ToArray();
+                                    var method = methods.Find(x => x.GetParameters().Select(x => x.ParameterType).SequenceEqual(argumentTypes));
+                                    if (method == null)
+                                        throw new ParserException($"Method or extension {memberName} not found for types {string.Join(", ", argumentTypes.Select(x => x.Name))}");
+                                    if (method.ReturnType == typeof(void))
+                                        throw new ParserException($"Method {memberName} returns void. Void methods are not supported, use functional approach.");
+                                    r1 = new(method.ReturnType, arguments.SelectMany(x => x.Flow).Append(method).ToList());
+                                }
+                                else
+                                {
+                                    var propertyInfo = members.FirstOrDefault() as PropertyInfo;
+                                    var fieldInfo = members.FirstOrDefault() as FieldInfo;
+                                    var memberReturnType = propertyInfo?.PropertyType ?? fieldInfo?.FieldType;
+                                    r1 = new CompilationResult(memberReturnType, r1.Flow.Append(new Func<object, object>((object obj) => propertyInfo?.GetValue(obj) ?? fieldInfo?.GetValue(obj))).ToList());
+                                }
                             }
                         }
                         result = r1;
