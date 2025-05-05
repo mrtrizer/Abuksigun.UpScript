@@ -33,9 +33,9 @@ namespace Abuksigun.UpScript.Tests
                 Assert.AreEqual(new Vector3(1, 10, 3), ExpressionEvaluator.Run(instructions));
             }
             {
-                Parser parser = new Parser("test", new() { { "test", 10 } });
+                Parser parser = new Parser("Mathf.CeilToInt(new Vector3(test,test,3).x).ToString(\"D4\")", new() { { "test", 10 } });
                 var instructions = parser.Compile(parser.Parse()).Flow;
-                Assert.AreEqual(10, ExpressionEvaluator.Run(instructions));
+                Assert.AreEqual("0010", ExpressionEvaluator.Run(instructions));
             }
             {
                 Parser parser = new Parser("test[(4 + 1) * 2]", new() { { "test", Enumerable.Range(0, 30).ToArray() } });

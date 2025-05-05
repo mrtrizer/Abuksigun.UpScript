@@ -1,8 +1,10 @@
 ﻿using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using UnityEngine;
+using System.Text;
+using System.Runtime.CompilerServices;
 
 using IntFunc = System.Func<int, int, int>;
 using FloatFunc = System.Func<float, float, float>;
@@ -18,9 +20,7 @@ using FloatBoolFunc = System.Func<float, float, bool>;
 using LongBoolFunc = System.Func<long, long, bool>;
 using CharBoolFunc = System.Func<char, char, bool>;
 using StringBoolFunc = System.Func<string, string, bool>;
-using UnityEngine;
-using System.Text;
-using System.Runtime.CompilerServices;
+
 
 namespace Abuksigun.UpScript
 {
@@ -160,8 +160,8 @@ namespace Abuksigun.UpScript
         bool StringLiteral => Block(() => And(() => Match("\""), () => ZeroOrMore(() => NotQuote()), () => Match("\"")), TokenType.Literal, x => x[1..^1]);
         bool Identifier => Block(() => And(() => Letter, () => ZeroOrMore(() => Or(() => Letter, () => Range('0', '9')))));
 
-        bool Constructor => Block(() => And(() => Match("new"), () => Space(), () => Reference, () => Space(), () => Function), TokenType.Constructor);
-        bool Function => Block(() => And(() => Match("("), () => Or(() => Match(")"), () => And(() => ZeroOrMore(() => Expression, () => Match(",")), () => Expression, () => Match(")")))), TokenType.Function);
+        bool Constructor => Block(() => And(() => Match("new"), () => Space(), () => Reference, () => Space(), () => FunctionArguments), TokenType.Constructor);
+        bool FunctionArguments => Block(() => And(() => Match("("), () => Or(() => Match(")"), () => And(() => ZeroOrMore(() => Expression, () => Match(",")), () => Expression, () => Match(")")))), TokenType.Function);
         bool Index => Block(() => And(() => Match("["), () => Expression, () => Match("]")), TokenType.Index);
 
         bool ExplicitConversion => Block(() => And(() => Block(() => And(() => Match("("), () => Space(), () => Identifier, () => Space(), () => Match(")")), TokenType.ExplicitConversion, (x) => x[1..^1].Trim()), () => Factor));
@@ -170,7 +170,7 @@ namespace Abuksigun.UpScript
         bool BracketBlock => Block(() => And(() => Match("("), () => Expression, () => Match(")")));
         bool Factor => Block(() => And(() => Space(), () => Or(() => BlockValue, () => Unary), () => Space()));
 
-        bool BlockValue => Block(() => And(() => Or(() => ExplicitConversion, () => NumberLiteral, () => StringLiteral, () => BoolLiteral, () => Constructor, () => Reference, () => BracketBlock), () => ZeroOrMore(() => Or(() => MemberReference, () => Function, () => Index))));
+        bool BlockValue => Block(() => And(() => Or(() => ExplicitConversion, () => NumberLiteral, () => StringLiteral, () => BoolLiteral, () => Constructor, () => Reference, () => BracketBlock), () => ZeroOrMore(() => Or(() => MemberReference, () => FunctionArguments, () => Index))));
 
         bool Unary => Block(() => And(() => Or(() => Match("-", TokenType.Unary), () => Match("!", TokenType.Unary)), () => Or(() => BlockValue, () => Unary)));
         bool Term => Block(() => And(() => Factor, () => ZeroOrMore(() => Or(() => Match("*", TokenType.Binary), () => Match("/", TokenType.Binary), () => Match("%", TokenType.Binary)), () => Factor)));
@@ -260,6 +260,7 @@ namespace Abuksigun.UpScript
             { "string", typeof(string) },
             { "char", typeof(char) },
             { "Vector3", typeof(Vector3) },
+            { "Mathf", typeof(Mathf) },
         };
 
         static Method FindMethod(string name, params Type[] arguments)
@@ -432,7 +433,7 @@ namespace Abuksigun.UpScript
                                         throw new ParserException($"Method or extension {memberName} not found for types {string.Join(", ", argumentTypes.Select(x => x.Name))}");
                                     if (method.ReturnType == typeof(void))
                                         throw new ParserException($"Method {memberName} returns void. Void methods are not supported, use functional approach.");
-                                    r1 = new(method.ReturnType, arguments.SelectMany(x => x.Flow).Append(method).ToList());
+                                    r1 = new CompilationResult(method.ReturnType, r1.Flow.Concat(arguments.SelectMany(x => x.Flow)).Append(method).ToList());
                                 }
                                 else
                                 {
