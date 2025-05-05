@@ -13,46 +13,44 @@ namespace Abuksigun.UpScript.Tests
         public void Test()
         {
             {
-                int dummyI = 0;
                 Parser parser = new Parser("(Vector3.one * 2).y", new() { { "test", new Vector3(1, 2, 3) } });
-                var instructions = parser.Compile(new List<Token>() { parser.Parse() }, ref dummyI).Flow;
+                var instructions = parser.Compile(parser.Parse()).Flow;
                 Assert.AreEqual(2, ExpressionEvaluator.Run(instructions));
             }
             {
-                int dummyI = 0;
                 Parser parser = new Parser("new Vector3(2, 2, 2).y * 2", new() { { "test", new Vector3(1, 2, 3) } });
-                var instructions = parser.Compile(new List<Token>() { parser.Parse() }, ref dummyI).Flow;
+                var instructions = parser.Compile(parser.Parse()).Flow;
                 Assert.AreEqual(4, ExpressionEvaluator.Run(instructions));
             }
             {
-                int dummyI = 0;
                 Parser parser = new Parser("test.y", new() { { "test", new Vector3(1, 2, 3) } });
-                var instructions = parser.Compile(new List<Token>() { parser.Parse() }, ref dummyI).Flow;
+                var instructions = parser.Compile(parser.Parse()).Flow;
                 Assert.AreEqual(2, ExpressionEvaluator.Run(instructions));
             }
             {
-                int dummyI = 0;
                 Parser parser = new Parser("new Vector3(1,test,3)", new() { { "test", 10 } });
-                var instructions = parser.Compile(new List<Token>() { parser.Parse() }, ref dummyI).Flow;
-                Assert.AreEqual(new Vector3(1,10,3), ExpressionEvaluator.Run(instructions));
+                var instructions = parser.Compile(parser.Parse()).Flow;
+                Assert.AreEqual(new Vector3(1, 10, 3), ExpressionEvaluator.Run(instructions));
             }
             {
-                int dummyI = 0;
                 Parser parser = new Parser("test", new() { { "test", 10 } });
-                var instructions = parser.Compile(new List<Token>() { parser.Parse() }, ref dummyI).Flow;
+                var instructions = parser.Compile(parser.Parse()).Flow;
                 Assert.AreEqual(10, ExpressionEvaluator.Run(instructions));
             }
             {
-                int dummyI = 0;
-                Parser parser = new Parser("test[10]", new() { { "test", Enumerable.Range(0, 30).ToArray() } });
-                var instructions = parser.Compile(new List<Token>() { parser.Parse() }, ref dummyI).Flow;
+                Parser parser = new Parser("test[(4 + 1) * 2]", new() { { "test", Enumerable.Range(0, 30).ToArray() } });
+                var instructions = parser.Compile(parser.Parse()).Flow;
                 Assert.AreEqual(10, ExpressionEvaluator.Run(instructions));
             }
             {
-                int dummyI = 0;
+                Parser parser = new Parser("test[\"10\"]", new() { { "test", Enumerable.Range(0, 30).ToDictionary(x => x.ToString(), y => y) } });
+                var instructions = parser.Compile(parser.Parse()).Flow;
+                Assert.AreEqual(10, ExpressionEvaluator.Run(instructions));
+            }
+            {
                 var array = Enumerable.Range(0, 30).ToArray();
                 Parser parser = new Parser("test[test[10][5]]", new() { { "test", Enumerable.Repeat(array, 20).ToArray() } });
-                var instructions = parser.Compile(new List<Token>() { parser.Parse() }, ref dummyI).Flow;
+                var instructions = parser.Compile(parser.Parse()).Flow;
                 Assert.AreEqual(array, ExpressionEvaluator.Run(instructions));
             }
             {

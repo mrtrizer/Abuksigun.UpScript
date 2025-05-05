@@ -149,34 +149,34 @@ namespace Abuksigun.UpScript
 
         bool IncPosition => position++ < input.Length;
         bool Range(char start, char end) => input.Length > position && input[position] >= start && input[position] <= end && IncPosition;
-        bool Character() => input.Length > position && ((input[position] >= 'A' && input[position] <= 'Z') || (input[position] >= 'a' && input[position] <= 'z')) && IncPosition;
+        bool NotQuote() => input.Length > position && (input[position] != '"' || (position > 0 && input[position - 1] == '\\')) && IncPosition;
 
         bool Digits => And(() => Range('0', '9'), () => ZeroOrMore(() => Range('0', '9')));
         bool Letter => Or(() => Range('a', 'z'), () => Range('A', 'Z'));
         bool Integer => Block(() => Digits, TokenType.Literal, x => int.Parse(x));
-        bool Float => Block(() => And(() => Digits, () => Match("."), () => Digits), TokenType.Literal, x => float.Parse(x));
+        bool Float => Block(() => And(() => Digits, () => Match("."), () => Digits), TokenType.Literal, x => float.Parse(x, System.Globalization.CultureInfo.InvariantCulture.NumberFormat));
         bool NumberLiteral => Or(() => Float, () => Integer);
         bool BoolLiteral => Block(() => Or(() => Match("true"), () => Match("false")), TokenType.Literal, x => bool.Parse(x));
-        bool StringLiteral => Block(() => And(() => Match("\""), () => ZeroOrMore(() => Character()), () => Match("\"")), TokenType.Literal, x => x[1..^1]);
+        bool StringLiteral => Block(() => And(() => Match("\""), () => ZeroOrMore(() => NotQuote()), () => Match("\"")), TokenType.Literal, x => x[1..^1]);
         bool Identifier => Block(() => And(() => Letter, () => ZeroOrMore(() => Or(() => Letter, () => Range('0', '9')))));
 
         bool Constructor => Block(() => And(() => Match("new"), () => Space(), () => Reference, () => Space(), () => Function), TokenType.Constructor);
-        bool Function => Block(() => And(() => Match("("), () => Or(() => Match(")"), () => And(() => ZeroOrMore(() => Logical, () => Match(",")), () => Logical, () => Match(")")))), TokenType.Function);
-        bool Index => Block(() => And(() => Match("["), () => Logical, () => Match("]")), TokenType.Index);
+        bool Function => Block(() => And(() => Match("("), () => Or(() => Match(")"), () => And(() => ZeroOrMore(() => Expression, () => Match(",")), () => Expression, () => Match(")")))), TokenType.Function);
+        bool Index => Block(() => And(() => Match("["), () => Expression, () => Match("]")), TokenType.Index);
 
         bool ExplicitConversion => Block(() => And(() => Block(() => And(() => Match("("), () => Space(), () => Identifier, () => Space(), () => Match(")")), TokenType.ExplicitConversion, (x) => x[1..^1].Trim()), () => Factor));
         bool Reference => Block(() => Identifier, TokenType.Reference, x => x);
         bool MemberReference => Block(() => And(() => Match("."), () => Identifier), TokenType.MemberReference, x => x.Trim('.'));
-        bool BracketBlock => Block(() => And(() => Match("("), () => Logical, () => Match(")")));
+        bool BracketBlock => Block(() => And(() => Match("("), () => Expression, () => Match(")")));
         bool Factor => Block(() => And(() => Space(), () => Or(() => BlockValue, () => Unary), () => Space()));
 
         bool BlockValue => Block(() => And(() => Or(() => ExplicitConversion, () => NumberLiteral, () => StringLiteral, () => BoolLiteral, () => Constructor, () => Reference, () => BracketBlock), () => ZeroOrMore(() => Or(() => MemberReference, () => Function, () => Index))));
 
         bool Unary => Block(() => And(() => Or(() => Match("-", TokenType.Unary), () => Match("!", TokenType.Unary)), () => Or(() => BlockValue, () => Unary)));
         bool Term => Block(() => And(() => Factor, () => ZeroOrMore(() => Or(() => Match("*", TokenType.Binary), () => Match("/", TokenType.Binary), () => Match("%", TokenType.Binary)), () => Factor)));
-        bool Expression => Block(() => And(() => Term, () => ZeroOrMore(() => Or(() => Match("+", TokenType.Binary), () => Match("-", TokenType.Binary)), () => Term)));
-        bool Comparison => Block(() => And(() => Expression, () => ZeroOrMore(() => Or(() => Match("<", TokenType.Binary), () => Match("<=", TokenType.Binary), () => Match(">", TokenType.Binary), () => Match(">=", TokenType.Binary), () => Match("==", TokenType.Binary), () => Match("!=", TokenType.Binary)), () => Expression)));
-        bool Logical => Block(() => And(() => Comparison, () => ZeroOrMore(() => Or(() => Match("&&", TokenType.Binary), () => Match("||", TokenType.Binary)), () => Comparison)));
+        bool Additive => Block(() => And(() => Term, () => ZeroOrMore(() => Or(() => Match("+", TokenType.Binary), () => Match("-", TokenType.Binary)), () => Term)));
+        bool Comparison => Block(() => And(() => Additive, () => ZeroOrMore(() => Or(() => Match("<", TokenType.Binary), () => Match("<=", TokenType.Binary), () => Match(">", TokenType.Binary), () => Match(">=", TokenType.Binary), () => Match("==", TokenType.Binary), () => Match("!=", TokenType.Binary)), () => Additive)));
+        bool Expression => Block(() => And(() => Comparison, () => ZeroOrMore(() => Or(() => Match("&&", TokenType.Binary), () => Match("||", TokenType.Binary)), () => Comparison)));
 
         static string TokenToString(string input, Token token, int level = 0)
         {
@@ -190,7 +190,7 @@ namespace Abuksigun.UpScript
         public Token Parse()
         {
             stack.Push(new Token(TokenType.Block, null, 0, 0, new()));
-            bool success = Logical;
+            bool success = Expression;
             var root = stack.Pop().Children[0];
             if (!success || root.Length != input.Length)
             {
@@ -272,6 +272,8 @@ namespace Abuksigun.UpScript
             }
             if (arguments[0].GetMethod(name, arguments) is { } method)
                 return new(method, method.ReturnType);
+            if (name.StartsWith("get_") && arguments[0].GetProperty(name.Substring(4)) is { } property)
+                return new(property.GetGetMethod(), property.PropertyType);
             return null;
         }
 
@@ -491,7 +493,10 @@ namespace Abuksigun.UpScript
                 else if (item is MethodInfo methodInfo)
                 {
                     var paramsArray = methodInfo.GetParameters().Select(x => stack.Pop()).Reverse().ToArray();
-                    stack.Push(methodInfo.Invoke(null, paramsArray));
+                    if (methodInfo.IsStatic)
+                        stack.Push(methodInfo.Invoke(null, paramsArray));
+                    else
+                        stack.Push(methodInfo.Invoke(stack.Pop(), paramsArray));
                 }
                 else if (item is RunDelegate runDelegate)
                 {
