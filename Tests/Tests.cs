@@ -12,6 +12,8 @@ namespace Abuksigun.UpScript.Tests
         [Test]
         public void Test()
         {
+            var max = new Func<int, int, int>((int a, int b) => a > b ? a : b);
+            var abs = new Func<int, int>((int i) => Mathf.Abs(i));
             {
                 Parser parser = new Parser("(Vector3.one * 2).y", new() { { "test", new Vector3(1, 2, 3) } });
                 var instructions = parser.Compile(parser.Parse()).Flow;
@@ -54,17 +56,17 @@ namespace Abuksigun.UpScript.Tests
                 Assert.AreEqual(array, ExpressionEvaluator.Run(instructions));
             }
             {
-                Parser parser = new Parser("max(abc(10), abc(20))", new() { { "test", 10 } });
+                Parser parser = new Parser("10 + max(abs(10), abs(20))", new() { { "test", 10 }, { "max", max }, { "abs", abs } });
                 var instructions = parser.Compile(parser.Parse()).Flow;
-                Assert.AreEqual(20, ExpressionEvaluator.Run(instructions));
+                Assert.AreEqual(30, ExpressionEvaluator.Run(instructions));
             }
             {
-                Parser parser = new Parser("test()", new() { { "test", new Func<int>(() => 100) } });
+                Parser parser = new Parser("10 + test()", new() { { "test", new Func<int>(() => 100) } });
                 var instructions = parser.Compile(parser.Parse()).Flow;
-                Assert.AreEqual(100, ExpressionEvaluator.Run(instructions));
+                Assert.AreEqual(110, ExpressionEvaluator.Run(instructions));
             }
             {
-                Parser parser = new Parser("(float)--2 / 3 + abc(50) + --test * max(10, 20 * 20) +20 + 2+3*4* -(5 + 6)", new() { { "test", 10 } });
+                Parser parser = new Parser("(float)--2 / 3 + abs(50) + --test * max(10, 20 * 20) +20 + 2+3*4* -(5 + 6)", new() { { "test", 10 }, { "max", max }, { "abs", abs } });
                 var instructions = parser.Compile(parser.Parse()).Flow;
                 Assert.AreEqual(3940, (int)(float)ExpressionEvaluator.Run(instructions));
             }
@@ -77,6 +79,13 @@ namespace Abuksigun.UpScript.Tests
                 Parser parser = new Parser("\"aaa\" + 10 == test + 10", new() { { "test", "aaa" } });
                 var instructions = parser.Compile(parser.Parse()).Flow;
                 Assert.AreEqual(true, ExpressionEvaluator.Run(instructions));
+            }
+            {
+                bool success = false;
+                Parser parser = new Parser("test()", new() { { "test", new Action(() => { success = true; }) } });
+                var instructions = parser.Compile(parser.Parse()).Flow;
+                ExpressionEvaluator.Run(instructions);
+                Assert.IsTrue(success);
             }
         }
     }

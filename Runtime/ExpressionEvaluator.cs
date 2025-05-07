@@ -246,8 +246,6 @@ namespace Abuksigun.UpScript
             { "op_Implicit", new Delegate[] { (Func<int, float>)(a => a), (Func<float, double>)(a => a), (Func<char, int>)(a => a), (Func<int, string>)(a => a.ToString()), (Func<float, string>)(a => a.ToString()), (Func<double, string>)(a => a.ToString()), (Func<bool, string>)(a => a.ToString()) } },
             { "op_Explicit", new Delegate[] { (Func<float, int>)(a => (int)a), (Func<double, float>)(a => (float)a), (Func<int, char>)(a => (char)a) } },
             { "get_Item", new Delegate[] { (Func<int[], int, int>)((a, index) => a[index]), (Func<int[][], int, int[]>)((a, index) => a[index]) } },
-            { "abc", new Delegate[] { new Func<int, int>(a => a) } },
-            { "max", new Delegate[] { new IntFunc((a, b) => Math.Max(a, b)) } },
         };
 
         static Dictionary<string, Type> typesMap = new()
@@ -263,18 +261,30 @@ namespace Abuksigun.UpScript
             { "Mathf", typeof(Mathf) },
         };
 
-        static Method FindMethod(string name, params Type[] arguments)
+        Method FindMethod(string name, params Type[] arguments)
         {
-            foreach (var func in fastOperators[name])
+            bool op = name.StartsWith("op_");
+            bool get = name.StartsWith("get_");
+
+            if (op || get)
+            {
+                foreach (var func in fastOperators[name])
+                {
+                    var parameters = func.Method.GetParameters();
+                    if (parameters.Length == arguments.Length && parameters.Select(x => x.ParameterType).SequenceEqual(arguments))
+                        return new(func, func.Method.ReturnType);
+                }
+                if (arguments[0].GetMethod(name, arguments) is { } method)
+                    return new(method, method.ReturnType);
+                if (get && arguments[0].GetProperty(name.Substring(4)) is { } property)
+                    return new(property.GetGetMethod(), property.PropertyType);
+            }
+            else if (Variables.TryGetValue(name, out var variable) && variable is Delegate func)
             {
                 var parameters = func.Method.GetParameters();
                 if (parameters.Length == arguments.Length && parameters.Select(x => x.ParameterType).SequenceEqual(arguments))
                     return new(func, func.Method.ReturnType);
             }
-            if (arguments[0].GetMethod(name, arguments) is { } method)
-                return new(method, method.ReturnType);
-            if (name.StartsWith("get_") && arguments[0].GetProperty(name.Substring(4)) is { } property)
-                return new(property.GetGetMethod(), property.PropertyType);
             return null;
         }
 
@@ -299,7 +309,7 @@ namespace Abuksigun.UpScript
         CompilationResult AddMethod(string name, params CompilationResult[] arguments)
         {
             List<object> flow = new();
-            var func = FindMethod(name, arguments.Select(x => x.Type).ToArray());
+            var func =  FindMethod(name, arguments.Select(x => x.Type).ToArray());
             if (func == null)
             {
                 var allConversions = arguments.Select(x => FindConversions(x.Type, "op_Implicit")).ToList();
@@ -374,7 +384,7 @@ namespace Abuksigun.UpScript
                 }
                 else if (token.Type == TokenType.Reference)
                 {
-                    if (tokens.Count - 1 > parentI && tokens[parentI + 1].Type == TokenType.Function && fastOperators.ContainsKey(token.Value as string))
+                    if (tokens.Count - 1 > parentI && tokens[parentI + 1].Type == TokenType.Function)
                         result = AddMethod(token.Value as string, tokens[++parentI].Children.Select(Compile).ToArray());
                     else if (Variables.TryGetValue(token.Value as string, out var variable))
                         result = new(variable.GetType(), new() { new Func<object>(() => Variables[token.Value as string]) });
