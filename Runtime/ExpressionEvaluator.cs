@@ -178,7 +178,7 @@ namespace Abuksigun.UpScript
         bool Comparison => Block(() => And(() => Additive, () => ZeroOrMore(() => Or(() => Match("<", TokenType.Binary), () => Match("<=", TokenType.Binary), () => Match(">", TokenType.Binary), () => Match(">=", TokenType.Binary), () => Match("==", TokenType.Binary), () => Match("!=", TokenType.Binary)), () => Additive)));
         bool RSExpression => Block(() => And(() => Comparison, () => ZeroOrMore(() => Or(() => Match("&&", TokenType.Binary), () => Match("||", TokenType.Binary)), () => Comparison)));
         bool LSExpression => Block(() => And(() => Reference, () => ZeroOrMore(() => Or(() => MemberReference, () => FunctionArguments, () => Index))));
-        bool Expression => Block(() => Or(() => And(() => LSExpression, () => Space(), () => Match("=", TokenType.Setter), () => Space(), () => RSExpression), () => RSExpression));
+        bool Expression => Block(() => Or(() => And(() => LSExpression, () => Space(), () => Match("=", TokenType.Setter), () => Space(), () => Expression), () => RSExpression));
 
         static string TokenToString(string input, Token token, int level = 0)
         {

@@ -25,11 +25,12 @@ namespace Abuksigun.UpScript.Tests
 
             {
                 var testObject = new TestObject();
-                var variables = new Dictionary<string, object> { ["test"] = testObject };
-                var parser = new Parser("test.field = 10", variables);
+                var variables = new Dictionary<string, object> { ["test"] = testObject, ["testInt"] = 10 };
+                var parser = new Parser("testInt = test.field = 10", variables);
                 var instructions = parser.Compile(parser.Parse()).Flow;
                 var testValue = (int)ExpressionEvaluator.Run(instructions, variables);
                 Assert.AreEqual(10, testValue);
+                Assert.AreEqual(10, variables["testInt"]);
                 Assert.AreEqual(10, testObject.field);
             }
             {
