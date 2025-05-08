@@ -24,7 +24,7 @@ using StringBoolFunc = System.Func<string, string, bool>;
 
 namespace Abuksigun.UpScript
 {
-    public enum TokenType { Block, Skip, Literal, Reference, MemberReference, Binary, Unary, ExplicitConversion, Function, Constructor, Index }
+    public enum TokenType { Block, Skip, Literal, Reference, MemberReference, Binary, Unary, ExplicitConversion, Function, Constructor, Index, Setter }
 
     public record Token(TokenType Type, object Value, int StartIndex, int Length, List<Token> Children)
     {
@@ -161,13 +161,13 @@ namespace Abuksigun.UpScript
         bool Identifier => Block(() => And(() => Letter, () => ZeroOrMore(() => Or(() => Letter, () => Range('0', '9')))));
 
         bool Constructor => Block(() => And(() => Match("new"), () => Space(), () => Reference, () => Space(), () => FunctionArguments), TokenType.Constructor);
-        bool FunctionArguments => Block(() => And(() => Match("("), () => Or(() => Match(")"), () => And(() => ZeroOrMore(() => Expression, () => Match(",")), () => Expression, () => Match(")")))), TokenType.Function);
-        bool Index => Block(() => And(() => Match("["), () => Expression, () => Match("]")), TokenType.Index);
+        bool FunctionArguments => Block(() => And(() => Match("("), () => Or(() => Match(")"), () => And(() => ZeroOrMore(() => RSExpression, () => Match(",")), () => RSExpression, () => Match(")")))), TokenType.Function);
+        bool Index => Block(() => And(() => Match("["), () => RSExpression, () => Match("]")), TokenType.Index);
 
         bool ExplicitConversion => Block(() => And(() => Block(() => And(() => Match("("), () => Space(), () => Identifier, () => Space(), () => Match(")")), TokenType.ExplicitConversion, (x) => x[1..^1].Trim()), () => Factor));
         bool Reference => Block(() => Identifier, TokenType.Reference, x => x);
         bool MemberReference => Block(() => And(() => Match("."), () => Identifier), TokenType.MemberReference, x => x.Trim('.'));
-        bool BracketBlock => Block(() => And(() => Match("("), () => Expression, () => Match(")")));
+        bool BracketBlock => Block(() => And(() => Match("("), () => RSExpression, () => Match(")")));
         bool Factor => Block(() => And(() => Space(), () => Or(() => BlockValue, () => Unary), () => Space()));
 
         bool BlockValue => Block(() => And(() => Or(() => ExplicitConversion, () => NumberLiteral, () => StringLiteral, () => BoolLiteral, () => Constructor, () => Reference, () => BracketBlock), () => ZeroOrMore(() => Or(() => MemberReference, () => FunctionArguments, () => Index))));
@@ -176,7 +176,9 @@ namespace Abuksigun.UpScript
         bool Term => Block(() => And(() => Factor, () => ZeroOrMore(() => Or(() => Match("*", TokenType.Binary), () => Match("/", TokenType.Binary), () => Match("%", TokenType.Binary)), () => Factor)));
         bool Additive => Block(() => And(() => Term, () => ZeroOrMore(() => Or(() => Match("+", TokenType.Binary), () => Match("-", TokenType.Binary)), () => Term)));
         bool Comparison => Block(() => And(() => Additive, () => ZeroOrMore(() => Or(() => Match("<", TokenType.Binary), () => Match("<=", TokenType.Binary), () => Match(">", TokenType.Binary), () => Match(">=", TokenType.Binary), () => Match("==", TokenType.Binary), () => Match("!=", TokenType.Binary)), () => Additive)));
-        bool Expression => Block(() => And(() => Comparison, () => ZeroOrMore(() => Or(() => Match("&&", TokenType.Binary), () => Match("||", TokenType.Binary)), () => Comparison)));
+        bool RSExpression => Block(() => And(() => Comparison, () => ZeroOrMore(() => Or(() => Match("&&", TokenType.Binary), () => Match("||", TokenType.Binary)), () => Comparison)));
+        bool LSExpression => Block(() => And(() => Reference, () => ZeroOrMore(() => Or(() => MemberReference, () => FunctionArguments, () => Index))));
+        bool Expression => Block(() => Or(() => And(() => LSExpression, () => Space(), () => Match("=", TokenType.Setter), () => Space(), () => RSExpression), () => RSExpression));
 
         static string TokenToString(string input, Token token, int level = 0)
         {
@@ -387,7 +389,7 @@ namespace Abuksigun.UpScript
                     if (tokens.Count - 1 > parentI && tokens[parentI + 1].Type == TokenType.Function)
                         result = AddMethod(token.Value as string, tokens[++parentI].Children.Select(Compile).ToArray());
                     else if (Variables.TryGetValue(token.Value as string, out var variable))
-                        result = new(variable.GetType(), new() { new Func<object>(() => Variables[token.Value as string]) });
+                        result = new(variable.GetType(), new() { new Object((Dictionary<string, object> variables) => variables[token.Value as string], (Dictionary<string, object> variables, object value) => (variables[token.Value as string] = value)) });
                     else if (typesMap.TryGetValue(token.Value as string, out var type))
                         result = new(type, new() { type });
                     else
@@ -396,7 +398,7 @@ namespace Abuksigun.UpScript
                 else if (token.Type == TokenType.Block)
                 {
                     var child = token.Children[0];
-
+                    
                     if (child.Type == TokenType.ExplicitConversion)
                     {
                         i = 1;
@@ -426,6 +428,12 @@ namespace Abuksigun.UpScript
                                 CompilationResult r2 = Compile(token.Children, ref i);
                                 r1 = AddMethod(binaryOperators[input.Substring(child.StartIndex, child.Length)], r1, r2);
                             }
+                            if (child.Type == TokenType.Setter)
+                            {
+                                i++;
+                                CompilationResult r2 = Compile(token.Children, ref i);
+                                r1 = new CompilationResult(r1.Type, r1.Flow.Concat(r2.Flow).Append(new SetOperator()).ToList());
+                            }
                             else if (child.Type == TokenType.MemberReference)
                             {
                                 var memberName = child.Value as string;
@@ -450,7 +458,15 @@ namespace Abuksigun.UpScript
                                     var propertyInfo = members.FirstOrDefault() as PropertyInfo;
                                     var fieldInfo = members.FirstOrDefault() as FieldInfo;
                                     var memberReturnType = propertyInfo?.PropertyType ?? fieldInfo?.FieldType;
-                                    r1 = new CompilationResult(memberReturnType, r1.Flow.Append(new Func<object, object>((object obj) => propertyInfo?.GetValue(obj) ?? fieldInfo?.GetValue(obj))).ToList());
+                                    r1 = new CompilationResult(memberReturnType, r1.Flow.Append(new Property((object obj) => propertyInfo?.GetValue(obj) ?? fieldInfo?.GetValue(obj), (object obj, object value) => {
+                                        // Ugly code, move to a function
+                                        if (propertyInfo != null)
+                                            propertyInfo.SetValue(obj, value);
+                                        else if (fieldInfo != null)
+                                            fieldInfo.SetValue(obj, value);
+                                        return value;
+                                    }
+                                    )).ToList());
                                 }
                             }
                         }
@@ -489,36 +505,66 @@ namespace Abuksigun.UpScript
         }
     }
 
+    public record Object(Func<Dictionary<string, object>, object> Get, Func<Dictionary<string, object>, object, object> Set);
+    public record Property(Func<object, object> Get, Func<object, object, object> Set);
+    public record SetOperator { }
+
     public static class ExpressionEvaluator
     {
-        public static object Run(List<object> flow)
+        public class EvaluatorException : Exception
+        {
+            public EvaluatorException(string message, Exception e = null) : base(message, e) { }
+        }
+
+        public static object Run(List<object> flow, Dictionary<string, object> variables)
         {
             Stack<object> stack = new();
+
+            object GetValue(object input)
+            {
+                if (input is Object @object)
+                    return @object.Get(variables);
+                if (input is Property property)
+                    return property.Get(GetValue(stack.Pop()));
+                return input;
+            }
+
             foreach (var item in flow)
             {
                 if (item is Delegate func)
                 {
-                    var paramsArray = func.Method.GetParameters().Select(x => stack.Pop()).Reverse().ToArray();
+                    var paramsArray = func.Method.GetParameters().Select(x => stack.Pop()).Select(GetValue).Reverse().ToArray();
                     stack.Push(func.DynamicInvoke(paramsArray));
                 }
                 else if (item is MethodInfo methodInfo)
                 {
-                    var paramsArray = methodInfo.GetParameters().Select(x => stack.Pop()).Reverse().ToArray();
+                    var paramsArray = methodInfo.GetParameters().Select(x => stack.Pop()).Select(GetValue).Reverse().ToArray();
                     if (methodInfo.IsStatic)
                         stack.Push(methodInfo.Invoke(null, paramsArray));
                     else
-                        stack.Push(methodInfo.Invoke(stack.Pop(), paramsArray));
+                        stack.Push(methodInfo.Invoke(GetValue(stack.Pop()), paramsArray));
                 }
                 else if (item is RunDelegate runDelegate)
                 {
                     func = stack.Pop() as Delegate;
-                    var paramsArray = Enumerable.Range(0, runDelegate.ArgsN).Select(x => stack.Pop()).ToArray();
+                    var paramsArray = Enumerable.Range(0, runDelegate.ArgsN).Select(x => stack.Pop()).Select(GetValue).ToArray();
                     stack.Push(func.DynamicInvoke(paramsArray));
                 }
                 else if (item is ConstructorInfo constructor)
                 {
-                    var paramsArray = Enumerable.Range(0, constructor.GetParameters().Length).Select(x => stack.Pop()).Reverse().ToArray();
+                    var paramsArray = Enumerable.Range(0, constructor.GetParameters().Length).Select(x => stack.Pop()).Select(GetValue).Reverse().ToArray();
                     stack.Push(constructor.Invoke(paramsArray));
+                }
+                else if (item is SetOperator setOperator)
+                {
+                    var rightSide = GetValue(stack.Pop());
+                    var leftSide = stack.Pop();
+                    if (leftSide is Property property)
+                        stack.Push(property.Set(GetValue(stack.Pop()), rightSide));
+                    else if (leftSide is Object @object)
+                        stack.Push(@object.Set(variables, rightSide));
+                    else
+                        throw new EvaluatorException($"Invalid left side of assignment: {leftSide}");
                 }
                 else
                 {
@@ -527,7 +573,7 @@ namespace Abuksigun.UpScript
                 Console.WriteLine($"{item} = {stack.Peek()}");
             }
 
-            return stack.Pop();
+            return GetValue(stack.Pop());
         }
     }
 }
