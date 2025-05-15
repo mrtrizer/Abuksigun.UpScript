@@ -41,7 +41,7 @@ namespace Abuksigun.UpScript.Tests
             }
             {
                 var variables = new Dictionary<string, object> { ["test"] = new Vector3(1, 2, 3) };
-                var parser = new Parser("new Vector3(2, 2, 2).y * 2", variables);
+                var parser = new Parser("-new Vector3(2, 2, 2).y * - 2", variables);
                 var instructions = parser.Compile(parser.Parse()).Flow;
                 Assert.AreEqual(4, ExpressionEvaluator.Run(instructions, variables));
             }

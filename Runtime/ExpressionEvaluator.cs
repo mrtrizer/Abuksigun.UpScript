@@ -48,6 +48,9 @@ namespace Abuksigun.UpScript
         readonly string input;
         int position = 0;
         Stack<Token> stack = new();
+        internal record Object(Func<Dictionary<string, object>, object> Get, Func<Dictionary<string, object>, object, object> Set);
+        internal record Property(Func<object, object> Get, Func<object, object, object> Set);
+        internal record SetOperator { }
         public Dictionary<string, object> Variables { get; } = new();
 
         public Parser(string input, Dictionary<string, object> variables)
@@ -172,7 +175,7 @@ namespace Abuksigun.UpScript
 
         bool BlockValue => Block(() => And(() => Or(() => ExplicitConversion, () => NumberLiteral, () => StringLiteral, () => BoolLiteral, () => Constructor, () => Reference, () => BracketBlock), () => ZeroOrMore(() => Or(() => MemberReference, () => FunctionArguments, () => Index))));
 
-        bool Unary => Block(() => And(() => Or(() => Match("-", TokenType.Unary), () => Match("!", TokenType.Unary)), () => Or(() => BlockValue, () => Unary)));
+        bool Unary => Block(() => And(() => Or(() => Match("-", TokenType.Unary), () => Match("!", TokenType.Unary)), () => Space(), () => Or(() => BlockValue, () => Unary)));
         bool Term => Block(() => And(() => Factor, () => ZeroOrMore(() => Or(() => Match("*", TokenType.Binary), () => Match("/", TokenType.Binary), () => Match("%", TokenType.Binary)), () => Factor)));
         bool Additive => Block(() => And(() => Term, () => ZeroOrMore(() => Or(() => Match("+", TokenType.Binary), () => Match("-", TokenType.Binary)), () => Term)));
         bool Comparison => Block(() => And(() => Additive, () => ZeroOrMore(() => Or(() => Match("<", TokenType.Binary), () => Match("<=", TokenType.Binary), () => Match(">", TokenType.Binary), () => Match(">=", TokenType.Binary), () => Match("==", TokenType.Binary), () => Match("!=", TokenType.Binary)), () => Additive)));
@@ -505,10 +508,6 @@ namespace Abuksigun.UpScript
         }
     }
 
-    public record Object(Func<Dictionary<string, object>, object> Get, Func<Dictionary<string, object>, object, object> Set);
-    public record Property(Func<object, object> Get, Func<object, object, object> Set);
-    public record SetOperator { }
-
     public static class ExpressionEvaluator
     {
         public class EvaluatorException : Exception
@@ -522,9 +521,9 @@ namespace Abuksigun.UpScript
 
             object GetValue(object input)
             {
-                if (input is Object @object)
+                if (input is Parser.Object @object)
                     return @object.Get(variables);
-                if (input is Property property)
+                if (input is Parser.Property property)
                     return property.Get(GetValue(stack.Pop()));
                 return input;
             }
@@ -555,13 +554,13 @@ namespace Abuksigun.UpScript
                     var paramsArray = Enumerable.Range(0, constructor.GetParameters().Length).Select(x => stack.Pop()).Select(GetValue).Reverse().ToArray();
                     stack.Push(constructor.Invoke(paramsArray));
                 }
-                else if (item is SetOperator setOperator)
+                else if (item is Parser.SetOperator setOperator)
                 {
                     var rightSide = GetValue(stack.Pop());
                     var leftSide = stack.Pop();
-                    if (leftSide is Property property)
+                    if (leftSide is Parser.Property property)
                         stack.Push(property.Set(GetValue(stack.Pop()), rightSide));
-                    else if (leftSide is Object @object)
+                    else if (leftSide is Parser.Object @object)
                         stack.Push(@object.Set(variables, rightSide));
                     else
                         throw new EvaluatorException($"Invalid left side of assignment: {leftSide}");
