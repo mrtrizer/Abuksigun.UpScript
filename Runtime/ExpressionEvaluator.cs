@@ -33,8 +33,6 @@ namespace Abuksigun.UpScript
         public int Length { get; set; } = Length;
     }
 
-    public record RunDelegate(int ArgsN);
-
     public class Parser
     {
         public class ParserException : Exception
@@ -48,9 +46,10 @@ namespace Abuksigun.UpScript
         readonly string input;
         int position = 0;
         Stack<Token> stack = new();
+        internal record RunDelegate(int ArgsN);
         internal record Object(Func<Dictionary<string, object>, object> Get, Func<Dictionary<string, object>, object, object> Set);
         internal record Property(Func<object, object> Get, Func<object, object, object> Set);
-        internal record Indexer(Func<object, object, object> Get, Func<object, object, object, object> Set, int Args);
+        internal record Indexer(Func<object, object[], object> Get, Func<object, object[], object, object> Set, int ArgsN);
         internal record SetOperator { }
         public Dictionary<string, object> Variables { get; } = new();
 
@@ -166,7 +165,7 @@ namespace Abuksigun.UpScript
 
         bool Constructor => Block(() => And(() => Match("new"), () => Space(), () => Reference, () => Space(), () => FunctionArguments), TokenType.Constructor);
         bool FunctionArguments => Block(() => And(() => Match("("), () => Or(() => Match(")"), () => And(() => ZeroOrMore(() => Expression, () => Match(",")), () => Expression, () => Match(")")))), TokenType.Function);
-        bool Index => Block(() => And(() => Match("["), () => Expression, () => Match("]")), TokenType.Index);
+        bool Index => Block(() => And(() => Match("["), () => Or(() => Match("]"), () => And(() => ZeroOrMore(() => Expression, () => Match(",")), () => Expression, () => Match("]")))), TokenType.Index); // Block(() => And(() => Match("["), () => Expression, () => Match("]")), TokenType.Index);
 
         bool ExplicitConversion => Block(() => And(() => Block(() => And(() => Match("("), () => Space(), () => Identifier, () => Space(), () => Match(")")), TokenType.ExplicitConversion, (x) => x[1..^1].Trim()), () => Factor));
         bool Reference => Block(() => Identifier, TokenType.Reference, x => x);
@@ -254,7 +253,6 @@ namespace Abuksigun.UpScript
             { "op_Decrement", new Delegate[] { new Func<int, int>(a => a - 1), new Func<float, float>(a => a - 1), new Func<double, double>(a => a - 1), new Func<long, long>(a => a - 1) } },
             { "op_Implicit", new Delegate[] { (Func<int, float>)(a => a), (Func<float, double>)(a => a), (Func<char, int>)(a => a), (Func<int, string>)(a => a.ToString()), (Func<float, string>)(a => a.ToString()), (Func<double, string>)(a => a.ToString()), (Func<bool, string>)(a => a.ToString()) } },
             { "op_Explicit", new Delegate[] { (Func<float, int>)(a => (int)a), (Func<double, float>)(a => (float)a), (Func<int, char>)(a => (char)a) } },
-            { "get_Item", new Delegate[] { (Func<int[], int, int>)((a, index) => a[index]), (Func<int[][], int, int[]>)((a, index) => a[index]) } },
         };
 
         static Dictionary<string, Type> typesMap = new()
@@ -272,10 +270,7 @@ namespace Abuksigun.UpScript
 
         Method FindMethod(string name, params Type[] arguments)
         {
-            bool op = name.StartsWith("op_");
-            bool get = name.StartsWith("get_");
-
-            if (op || get)
+            if (name.StartsWith("op_"))
             {
                 foreach (var func in fastOperators[name])
                 {
@@ -285,8 +280,6 @@ namespace Abuksigun.UpScript
                 }
                 if (arguments[0].GetMethod(name, arguments) is { } method)
                     return new(method, method.ReturnType);
-                if (get && arguments[0].GetProperty(name.Substring(4)) is { } property)
-                    return new(property.GetGetMethod(), property.PropertyType);
             }
             else if (Variables.TryGetValue(name, out var variable) && variable is Delegate func)
             {
@@ -456,7 +449,7 @@ namespace Abuksigun.UpScript
                                 CompilationResult r2 = Compile(token.Children, ref i);
                                 r1 = AddMethod(binaryOperators[input.Substring(child.StartIndex, child.Length)], r1, r2);
                             }
-                            if (child.Type == TokenType.Setter)
+                            else if (child.Type == TokenType.Setter)
                             {
                                 i++;
                                 CompilationResult r2 = Compile(token.Children, ref i);
@@ -501,15 +494,30 @@ namespace Abuksigun.UpScript
                     result = new CompilationResult(type, args.SelectMany(x => x.Flow).Append(type.GetConstructor(args.Select(x => x.Type).ToArray())).ToList());
                 }
 
-                while (tokens.Count - 1 > parentI && (tokens[parentI + 1].Type == TokenType.Index || tokens[parentI + 1].Type == TokenType.Function))
+                while (tokens.Count - 1 > parentI && tokens[parentI + 1].Type is (TokenType.Index or TokenType.Function))
                 {
                     var nextTokenType = tokens[parentI + 1].Type;
                     var args = tokens[++parentI].Children.Select(Compile).Prepend(result).ToArray();
 
                     if (nextTokenType == TokenType.Index)
-                        result = AddMethod("get_Item", args);
-                    if (nextTokenType == TokenType.Function)
+                    {
+                        var type = args[0].Type;
+                        var indexTypes = args.Skip(1).Select(x => x.Type).ToArray();
+                        var elementType = type.IsArray ? type.GetElementType() : type.GetProperty("Item").PropertyType;
+                        var getter = type.IsArray ? type.GetMethod("GetValue", indexTypes) : type.GetProperty("Item").GetGetMethod();
+                        var setter = type.IsArray ? type.GetMethod("SetValue", indexTypes.Prepend(elementType).ToArray()) : type.GetProperty("Item").GetSetMethod();
+                        result = new CompilationResult(elementType, args.SelectMany(x => x.Flow).Append(new Indexer(
+                            (object subject, object[] indices) => getter.Invoke(subject, indices), 
+                            (object subject, object[] indices, object value) => {
+                                setter.Invoke(subject, indices.Prepend(value).ToArray());
+                                return value;
+                            }, 
+                            args.Length - 1)).ToList());
+                    }
+                    else if (nextTokenType == TokenType.Function)
+                    {
                         result = new CompilationResult(typeof(Delegate), args.SelectMany(x => x.Flow).Append(new RunDelegate(args.Length - 1)).ToList());
+                    }
                 }
 
                 if (result != null)
@@ -542,6 +550,11 @@ namespace Abuksigun.UpScript
                     return @object.Get(variables);
                 if (input is Parser.Property property)
                     return property.Get(GetValue(stack.Pop()));
+                if (input is Parser.Indexer indexer)
+                {
+                    var arguments = Enumerable.Range(0, indexer.ArgsN).Select(x => GetValue(stack.Pop())).ToArray();
+                    return indexer.Get(GetValue(stack.Pop()), arguments);
+                }
                 return input;
             }
 
@@ -560,7 +573,7 @@ namespace Abuksigun.UpScript
                     else
                         stack.Push(methodInfo.Invoke(GetValue(stack.Pop()), paramsArray));
                 }
-                else if (item is RunDelegate runDelegate)
+                else if (item is Parser.RunDelegate runDelegate)
                 {
                     func = stack.Pop() as Delegate;
                     var paramsArray = Enumerable.Range(0, runDelegate.ArgsN).Select(x => stack.Pop()).Select(GetValue).ToArray();
@@ -576,11 +589,22 @@ namespace Abuksigun.UpScript
                     var rightSide = GetValue(stack.Pop());
                     var leftSide = stack.Pop();
                     if (leftSide is Parser.Property property)
+                    {
                         stack.Push(property.Set(GetValue(stack.Pop()), rightSide));
+                    }
                     else if (leftSide is Parser.Object @object)
+                    {
                         stack.Push(@object.Set(variables, rightSide));
+                    }
+                    else if (leftSide is Parser.Indexer indexer)
+                    {
+                        var arguments = Enumerable.Range(0, indexer.ArgsN).Select(x => GetValue(stack.Pop())).ToArray();
+                        stack.Push(indexer.Set(GetValue(stack.Pop()), arguments, rightSide));
+                    }
                     else
+                    {
                         throw new EvaluatorException($"Invalid left side of assignment: {leftSide}");
+                    }
                 }
                 else
                 {

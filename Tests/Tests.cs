@@ -78,6 +78,22 @@ namespace Abuksigun.UpScript.Tests
                 Assert.AreEqual("0010", ExpressionEvaluator.Run(instructions, variables));
             }
             {
+                var variables = new Dictionary<string, object> { ["test"] = Enumerable.Range(0, 30).Select(x => x.ToString()).ToArray() };
+                var parser = new Parser("test[10] = test[10] + test[11]", variables);
+                var instructions = parser.Compile(parser.Parse()).Flow;
+                Assert.AreEqual("1011", ExpressionEvaluator.Run(instructions, variables));
+            }
+            {
+                var twoDimensionalArray = new string[10, 10];
+                for (int i = 0; i < 10; i++)
+                    for (int j = 0; j < 10; j++)
+                        twoDimensionalArray[j, i] = $"{i}{j}";
+                var variables = new Dictionary<string, object> { ["test"] = twoDimensionalArray };
+                var parser = new Parser("test[5, 3]", variables);
+                var instructions = parser.Compile(parser.Parse()).Flow;
+                Assert.AreEqual("53", ExpressionEvaluator.Run(instructions, variables));
+            }
+            {
                 var variables = new Dictionary<string, object> { ["test"] = Enumerable.Range(0, 30).ToArray() };
                 var parser = new Parser("test[(4 + 1) * 2]", variables);
                 var instructions = parser.Compile(parser.Parse()).Flow;
