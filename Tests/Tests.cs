@@ -23,6 +23,10 @@ namespace Abuksigun.UpScript.Tests
             var max = new Func<int, int, int>((a, b) => a > b ? a : b);
             var abs = new Func<int, int>(i => Mathf.Abs(i));
 
+            Assert.IsTrue((bool)ExpressionEvaluator.Run(new Parser("10 < 20").Compile().Flow, null));
+            Assert.IsFalse((bool)ExpressionEvaluator.Run(new Parser("10 > 20").Compile().Flow, null));
+            Assert.IsTrue((bool)ExpressionEvaluator.Run(new Parser("10 <= 20").Compile().Flow, null));
+            Assert.IsFalse((bool)ExpressionEvaluator.Run(new Parser("10 >= 20").Compile().Flow, null));
             {
                 var testObject = new TestObject();
                 var variables = new Dictionary<string, object> { ["test"] = testObject, ["testInt"] = 10 };
@@ -34,8 +38,8 @@ namespace Abuksigun.UpScript.Tests
                 Assert.AreEqual(10, testObject.field);
             }
             {
-                var variables = new Dictionary<string, object> { ["test"] = new Vector3(1, 2, 3) };
-                var parser = new Parser("(Vector3.one * 2).y", variables);
+                var variables = new Dictionary<string, object> { ["test_1"] = new Vector3(1, 2, 3) };
+                var parser = new Parser("(Vector3.one * 4).y / test_1.y", variables);
                 var instructions = parser.Compile(parser.Parse()).Flow;
                 Assert.AreEqual(2, ExpressionEvaluator.Run(instructions, variables));
             }

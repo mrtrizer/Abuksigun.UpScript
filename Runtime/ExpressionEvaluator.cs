@@ -53,10 +53,10 @@ namespace Abuksigun.UpScript
         internal record SetOperator { }
         public Dictionary<string, object> Variables { get; } = new();
 
-        public Parser(string input, Dictionary<string, object> variables)
+        public Parser(string input, Dictionary<string, object> variables = null)
         {
             this.input = input;
-            Variables = variables;
+            Variables = variables ?? new();
         }
 
         Token AddToken(TokenType tokenType, object value, int StartIndex, int Length)
@@ -152,10 +152,11 @@ namespace Abuksigun.UpScript
 
         bool IncPosition => position++ < input.Length;
         bool Range(char start, char end) => input.Length > position && input[position] >= start && input[position] <= end && IncPosition;
+        bool Character(char c) => input.Length > position && input[position] == c && IncPosition;
         bool NotQuote() => input.Length > position && (input[position] != '"' || (position > 0 && input[position - 1] == '\\')) && IncPosition;
 
         bool Digits => And(() => Range('0', '9'), () => ZeroOrMore(() => Range('0', '9')));
-        bool Letter => Or(() => Range('a', 'z'), () => Range('A', 'Z'));
+        bool Letter => Or(() => Range('a', 'z'), () => Range('A', 'Z'), () => Character('_'));
         bool Integer => Block(() => Digits, TokenType.Literal, x => int.Parse(x));
         bool Float => Block(() => And(() => Digits, () => Match("."), () => Digits), TokenType.Literal, x => float.Parse(x, System.Globalization.CultureInfo.InvariantCulture.NumberFormat));
         bool NumberLiteral => Or(() => Float, () => Integer);
@@ -178,7 +179,7 @@ namespace Abuksigun.UpScript
         bool Unary => Block(() => And(() => Or(() => Match("++", TokenType.Increment), () => Match("--", TokenType.Increment), () => Match("-", TokenType.Unary), () => Match("!", TokenType.Unary)), () => Space(), () => Or(() => BlockValue, () => Unary)));
         bool Term => Block(() => And(() => Factor, () => ZeroOrMore(() => Or(() => Match("*", TokenType.Binary), () => Match("/", TokenType.Binary), () => Match("%", TokenType.Binary)), () => Factor)));
         bool Additive => Block(() => And(() => Term, () => ZeroOrMore(() => Or(() => Match("+", TokenType.Binary), () => Match("-", TokenType.Binary)), () => Term)));
-        bool Comparison => Block(() => And(() => Additive, () => ZeroOrMore(() => Or(() => Match("<", TokenType.Binary), () => Match("<=", TokenType.Binary), () => Match(">", TokenType.Binary), () => Match(">=", TokenType.Binary), () => Match("==", TokenType.Binary), () => Match("!=", TokenType.Binary)), () => Additive)));
+        bool Comparison => Block(() => And(() => Additive, () => ZeroOrMore(() => Or(() => Match("<=", TokenType.Binary), () => Match(">=", TokenType.Binary), () => Match("<", TokenType.Binary), () => Match(">", TokenType.Binary), () => Match("==", TokenType.Binary), () => Match("!=", TokenType.Binary)), () => Additive)));
         bool RSExpression => Block(() => And(() => Comparison, () => ZeroOrMore(() => Or(() => Match("&&", TokenType.Binary), () => Match("||", TokenType.Binary)), () => Comparison)));
         bool LSExpression => Block(() => And(() => Reference, () => ZeroOrMore(() => Or(() => MemberReference, () => Index))));
         bool Expression => Block(() => Or(() => And(() => LSExpression, () => Space(), () => Match("=", TokenType.Setter), () => Space(), () => Expression), () => RSExpression));
@@ -375,10 +376,10 @@ namespace Abuksigun.UpScript
             return value;
         }
 
-        public CompilationResult Compile(Token token)
+        public CompilationResult Compile(Token token = null)
         {
             int dummyI = 0;
-            List<Token> tmpList = new List<Token> { token };
+            List<Token> tmpList = new List<Token> { token ?? Parse() };
             return Compile(tmpList, ref dummyI);
         }
 
@@ -540,7 +541,7 @@ namespace Abuksigun.UpScript
             public EvaluatorException(string message, Exception e = null) : base(message, e) { }
         }
 
-        public static object Run(List<object> flow, Dictionary<string, object> variables)
+        public static object Run(List<object> flow, Dictionary<string, object> variables = null)
         {
             Stack<object> stack = new();
 
