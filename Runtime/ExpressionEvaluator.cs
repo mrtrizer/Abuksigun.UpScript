@@ -50,6 +50,7 @@ namespace Abuksigun.UpScript
         Stack<Token> stack = new();
         internal record Object(Func<Dictionary<string, object>, object> Get, Func<Dictionary<string, object>, object, object> Set);
         internal record Property(Func<object, object> Get, Func<object, object, object> Set);
+        internal record Indexer(Func<object, object, object> Get, Func<object, object, object, object> Set, int Args);
         internal record SetOperator { }
         public Dictionary<string, object> Variables { get; } = new();
 
@@ -372,6 +373,15 @@ namespace Abuksigun.UpScript
                 .ToArray();
         }
 
+        static object SetValue(object obj, object value, PropertyInfo propertyInfo, FieldInfo fieldInfo)
+        {
+            if (propertyInfo != null)
+                propertyInfo.SetValue(obj, value);
+            else if (fieldInfo != null)
+                fieldInfo.SetValue(obj, value);
+            return value;
+        }
+
         public CompilationResult Compile(Token token)
         {
             int dummyI = 0;
@@ -476,15 +486,7 @@ namespace Abuksigun.UpScript
                                     var propertyInfo = members.FirstOrDefault() as PropertyInfo;
                                     var fieldInfo = members.FirstOrDefault() as FieldInfo;
                                     var memberReturnType = propertyInfo?.PropertyType ?? fieldInfo?.FieldType;
-                                    r1 = new CompilationResult(memberReturnType, r1.Flow.Append(new Property((object obj) => propertyInfo?.GetValue(obj) ?? fieldInfo?.GetValue(obj), (object obj, object value) => {
-                                        // Ugly code, move to a function
-                                        if (propertyInfo != null)
-                                            propertyInfo.SetValue(obj, value);
-                                        else if (fieldInfo != null)
-                                            fieldInfo.SetValue(obj, value);
-                                        return value;
-                                    }
-                                    )).ToList());
+                                    r1 = new CompilationResult(memberReturnType, r1.Flow.Append(new Property((object obj) => propertyInfo?.GetValue(obj) ?? fieldInfo?.GetValue(obj), (object obj, object value) => SetValue(obj, value, propertyInfo, fieldInfo))).ToList());
                                 }
                             }
                         }
