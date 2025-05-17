@@ -164,13 +164,13 @@ namespace Abuksigun.UpScript
         bool Identifier => Block(() => And(() => Letter, () => ZeroOrMore(() => Or(() => Letter, () => Range('0', '9')))));
 
         bool Constructor => Block(() => And(() => Match("new"), () => Space(), () => Reference, () => Space(), () => FunctionArguments), TokenType.Constructor);
-        bool FunctionArguments => Block(() => And(() => Match("("), () => Or(() => Match(")"), () => And(() => ZeroOrMore(() => RSExpression, () => Match(",")), () => RSExpression, () => Match(")")))), TokenType.Function);
-        bool Index => Block(() => And(() => Match("["), () => RSExpression, () => Match("]")), TokenType.Index);
+        bool FunctionArguments => Block(() => And(() => Match("("), () => Or(() => Match(")"), () => And(() => ZeroOrMore(() => Expression, () => Match(",")), () => Expression, () => Match(")")))), TokenType.Function);
+        bool Index => Block(() => And(() => Match("["), () => Expression, () => Match("]")), TokenType.Index);
 
         bool ExplicitConversion => Block(() => And(() => Block(() => And(() => Match("("), () => Space(), () => Identifier, () => Space(), () => Match(")")), TokenType.ExplicitConversion, (x) => x[1..^1].Trim()), () => Factor));
         bool Reference => Block(() => Identifier, TokenType.Reference, x => x);
         bool MemberReference => Block(() => And(() => Match("."), () => Identifier), TokenType.MemberReference, x => x.Trim('.'));
-        bool BracketBlock => Block(() => And(() => Match("("), () => RSExpression, () => Match(")")));
+        bool BracketBlock => Block(() => And(() => Match("("), () => Expression, () => Match(")")));
         bool Factor => Block(() => And(() => Space(), () => Or(() => BlockValue, () => Unary), () => Space()));
 
         bool BlockValue => Block(() => And(() => Or(() => ExplicitConversion, () => NumberLiteral, () => StringLiteral, () => BoolLiteral, () => Constructor, () => Reference, () => BracketBlock), () => ZeroOrMore(() => Or(() => MemberReference, () => FunctionArguments, () => Index))));
@@ -180,7 +180,7 @@ namespace Abuksigun.UpScript
         bool Additive => Block(() => And(() => Term, () => ZeroOrMore(() => Or(() => Match("+", TokenType.Binary), () => Match("-", TokenType.Binary)), () => Term)));
         bool Comparison => Block(() => And(() => Additive, () => ZeroOrMore(() => Or(() => Match("<", TokenType.Binary), () => Match("<=", TokenType.Binary), () => Match(">", TokenType.Binary), () => Match(">=", TokenType.Binary), () => Match("==", TokenType.Binary), () => Match("!=", TokenType.Binary)), () => Additive)));
         bool RSExpression => Block(() => And(() => Comparison, () => ZeroOrMore(() => Or(() => Match("&&", TokenType.Binary), () => Match("||", TokenType.Binary)), () => Comparison)));
-        bool LSExpression => Block(() => And(() => Reference, () => ZeroOrMore(() => Or(() => MemberReference, () => FunctionArguments, () => Index))));
+        bool LSExpression => Block(() => And(() => Reference, () => ZeroOrMore(() => Or(() => MemberReference, () => Index))));
         bool Expression => Block(() => Or(() => And(() => LSExpression, () => Space(), () => Match("=", TokenType.Setter), () => Space(), () => Expression), () => RSExpression));
 
         static string TokenToString(string input, Token token, int level = 0)
