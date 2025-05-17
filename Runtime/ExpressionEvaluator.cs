@@ -24,7 +24,7 @@ using StringBoolFunc = System.Func<string, string, bool>;
 
 namespace Abuksigun.UpScript
 {
-    public enum TokenType { Block, Skip, Literal, Reference, MemberReference, Binary, Unary, ExplicitConversion, Function, Constructor, Index, Setter }
+    public enum TokenType { Block, Skip, Literal, Reference, MemberReference, Binary, Unary, Increment, ExplicitConversion, Function, Constructor, Index, Setter }
 
     public record Token(TokenType Type, object Value, int StartIndex, int Length, List<Token> Children)
     {
@@ -175,7 +175,7 @@ namespace Abuksigun.UpScript
 
         bool BlockValue => Block(() => And(() => Or(() => ExplicitConversion, () => NumberLiteral, () => StringLiteral, () => BoolLiteral, () => Constructor, () => Reference, () => BracketBlock), () => ZeroOrMore(() => Or(() => MemberReference, () => FunctionArguments, () => Index))));
 
-        bool Unary => Block(() => And(() => Or(() => Match("-", TokenType.Unary), () => Match("!", TokenType.Unary)), () => Space(), () => Or(() => BlockValue, () => Unary)));
+        bool Unary => Block(() => And(() => Or(() => Match("++", TokenType.Increment), () => Match("--", TokenType.Increment), () => Match("-", TokenType.Unary), () => Match("!", TokenType.Unary)), () => Space(), () => Or(() => BlockValue, () => Unary)));
         bool Term => Block(() => And(() => Factor, () => ZeroOrMore(() => Or(() => Match("*", TokenType.Binary), () => Match("/", TokenType.Binary), () => Match("%", TokenType.Binary)), () => Factor)));
         bool Additive => Block(() => And(() => Term, () => ZeroOrMore(() => Or(() => Match("+", TokenType.Binary), () => Match("-", TokenType.Binary)), () => Term)));
         bool Comparison => Block(() => And(() => Additive, () => ZeroOrMore(() => Or(() => Match("<", TokenType.Binary), () => Match("<=", TokenType.Binary), () => Match(">", TokenType.Binary), () => Match(">=", TokenType.Binary), () => Match("==", TokenType.Binary), () => Match("!=", TokenType.Binary)), () => Additive)));
@@ -228,8 +228,9 @@ namespace Abuksigun.UpScript
         {
             { "-", "op_UnaryNegation" },
             { "!", "op_LogicalNot" },
+            { "++", "op_Increment" },
+            { "--", "op_Decrement" }
         };
-
 
         static Dictionary<string, Delegate[]> fastOperators = new()
         {
@@ -248,6 +249,8 @@ namespace Abuksigun.UpScript
             { "op_BitwiseOr", new Delegate[] { new IntFunc((a, b) => a | b), new LongFunc((a, b) => a | b), new BoolFunc((a, b) => a || b) } },
             { "op_UnaryNegation", new Delegate[] { new Func<int, int>(a => -a), new Func<double, double>(a => -a), new Func<float, float>(a => -a), new Func<long, long>(a => -a) } },
             { "op_LogicalNot", new Delegate[] { new Func<bool, bool>(a => !a) } },
+            { "op_Increment", new Delegate[] { new Func<int, int>(a => a + 1), new Func<float, float>(a => a + 1), new Func<double, double>(a => a + 1), new Func<long, long>(a => a + 1) } },
+            { "op_Decrement", new Delegate[] { new Func<int, int>(a => a - 1), new Func<float, float>(a => a - 1), new Func<double, double>(a => a - 1), new Func<long, long>(a => a - 1) } },
             { "op_Implicit", new Delegate[] { (Func<int, float>)(a => a), (Func<float, double>)(a => a), (Func<char, int>)(a => a), (Func<int, string>)(a => a.ToString()), (Func<float, string>)(a => a.ToString()), (Func<double, string>)(a => a.ToString()), (Func<bool, string>)(a => a.ToString()) } },
             { "op_Explicit", new Delegate[] { (Func<float, int>)(a => (int)a), (Func<double, float>)(a => (float)a), (Func<int, char>)(a => (char)a) } },
             { "get_Item", new Delegate[] { (Func<int[], int, int>)((a, index) => a[index]), (Func<int[][], int, int[]>)((a, index) => a[index]) } },
@@ -418,6 +421,18 @@ namespace Abuksigun.UpScript
                         i = 1;
                         CompilationResult r1 = Compile(token.Children, ref i);
                         result = AddMethod(unaryOperators[input.Substring(child.StartIndex, child.Length)], r1);
+                    }
+                    else if (child.Type == TokenType.Increment)
+                    {
+                        i = 1;
+                        CompilationResult r1 = Compile(token.Children, ref i);
+                        string op = input.Substring(child.StartIndex, child.Length);
+                        if (r1.Flow[^1] is not (Property or Object))
+                            throw new ParserException($"{op} operator can only be used on left side expressions such as variable");
+                        if (!r1.Type.IsPrimitive)
+                            throw new ParserException($"{op} operator can only be used on primitive types");
+                        var increment = FindMethod(unaryOperators[op], r1.Type).Func;
+                        result = new CompilationResult(r1.Type, r1.Flow.Concat(r1.Flow).Append(increment).Append(new SetOperator()).ToList());
                     }
                     else
                     {

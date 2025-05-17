@@ -47,9 +47,23 @@ namespace Abuksigun.UpScript.Tests
             }
             {
                 var variables = new Dictionary<string, object> { ["test"] = new Vector3(1, 2, 3) };
-                var parser = new Parser("test.y", variables);
+                var parser = new Parser("-test.y", variables);
+                var instructions = parser.Compile(parser.Parse()).Flow;
+                Assert.AreEqual(-2, ExpressionEvaluator.Run(instructions, variables));
+            }
+            {
+                var variables = new Dictionary<string, object> { ["test"] = 1 };
+                var parser = new Parser("++test", variables);
                 var instructions = parser.Compile(parser.Parse()).Flow;
                 Assert.AreEqual(2, ExpressionEvaluator.Run(instructions, variables));
+                Assert.AreEqual(2, variables["test"]);
+            }
+            {
+                var variables = new Dictionary<string, object> { ["test"] = new Vector3(1, 2, 3) };
+                var parser = new Parser("--test.y", variables);
+                var instructions = parser.Compile(parser.Parse()).Flow;
+                Assert.AreEqual(1, ExpressionEvaluator.Run(instructions, variables));
+                Assert.AreEqual(new Vector3(1, 1, 3), variables["test"]);
             }
             {
                 var variables = new Dictionary<string, object> { ["test"] = 10 };
@@ -104,7 +118,7 @@ namespace Abuksigun.UpScript.Tests
                     ["max"] = max,
                     ["abs"] = abs
                 };
-                var parser = new Parser("(float)--2 / 3 + abs(50) + --test * max(10, 20 * 20) +20 + 2+3*4* -(5 + 6)", variables);
+                var parser = new Parser("(float)- -2 / 3 + abs(50) + - -test * max(10, 20 * 20) +20 + 2+3*4* -(5 + 6)", variables);
                 var instructions = parser.Compile(parser.Parse()).Flow;
                 Assert.AreEqual(3940, (int)(float)ExpressionEvaluator.Run(instructions, variables));
             }
