@@ -23,10 +23,10 @@ namespace Abuksigun.UpScript.Tests
             var max = new Func<int, int, int>((a, b) => a > b ? a : b);
             var abs = new Func<int, int>(i => Mathf.Abs(i));
 
-            Assert.IsTrue((bool)ExpressionEvaluator.Run(new Parser("10 < 20").Compile().Flow, null));
-            Assert.IsFalse((bool)ExpressionEvaluator.Run(new Parser("10 > 20").Compile().Flow, null));
-            Assert.IsTrue((bool)ExpressionEvaluator.Run(new Parser("10 <= 20").Compile().Flow, null));
-            Assert.IsFalse((bool)ExpressionEvaluator.Run(new Parser("10 >= 20").Compile().Flow, null));
+            Assert.IsTrue((bool)ExpressionEvaluator.Run(new Parser("10 < 20").Compile().Flow));
+            Assert.IsFalse((bool)ExpressionEvaluator.Run(new Parser("10 > 20").Compile().Flow));
+            Assert.IsTrue((bool)ExpressionEvaluator.Run(new Parser("10 <= 20").Compile().Flow));
+            Assert.IsFalse((bool)ExpressionEvaluator.Run(new Parser("10 >= 20").Compile().Flow));
             {
                 var testObject = new TestObject();
                 var variables = new Dictionary<string, object> { ["test"] = testObject, ["testInt"] = 10 };
@@ -157,7 +157,7 @@ namespace Abuksigun.UpScript.Tests
             {
                 var success = false;
                 var variables = new Dictionary<string, object> { ["test"] = new Action(() => success = true) };
-                var parser = new Parser("test()", variables);
+                var parser = new Parser("test() ", variables);
                 var instructions = parser.Compile(parser.Parse()).Flow;
                 ExpressionEvaluator.Run(instructions, variables);
                 Assert.IsTrue(success);

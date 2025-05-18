@@ -165,8 +165,8 @@ namespace Abuksigun.UpScript
         bool Identifier => Block(() => And(() => Letter, () => ZeroOrMore(() => Or(() => Letter, () => Range('0', '9')))));
 
         bool Constructor => Block(() => And(() => Match("new"), () => Space(), () => Reference, () => Space(), () => FunctionArguments), TokenType.Constructor);
-        bool FunctionArguments => Block(() => And(() => Match("("), () => Or(() => Match(")"), () => And(() => ZeroOrMore(() => Expression, () => Match(",")), () => Expression, () => Match(")")))), TokenType.Function);
-        bool Index => Block(() => And(() => Match("["), () => Or(() => Match("]"), () => And(() => ZeroOrMore(() => Expression, () => Match(",")), () => Expression, () => Match("]")))), TokenType.Index); // Block(() => And(() => Match("["), () => Expression, () => Match("]")), TokenType.Index);
+        bool FunctionArguments => Block(() => And(() => Match("("), () => Or(() => Match(")"), () => And(() => ZeroOrMore(() => Expression, () => Match(",")), () => Expression, () => Match(")"))), () => Space()), TokenType.Function);
+        bool Index => Block(() => And(() => Match("["), () => Or(() => Match("]"), () => And(() => ZeroOrMore(() => Expression, () => Match(",")), () => Expression, () => Match("]"))), () => Space()), TokenType.Index); // Block(() => And(() => Match("["), () => Expression, () => Match("]")), TokenType.Index);
 
         bool ExplicitConversion => Block(() => And(() => Block(() => And(() => Match("("), () => Space(), () => Identifier, () => Space(), () => Match(")")), TokenType.ExplicitConversion, (x) => x[1..^1].Trim()), () => Factor));
         bool Reference => Block(() => Identifier, TokenType.Reference, x => x);
