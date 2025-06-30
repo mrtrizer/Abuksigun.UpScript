@@ -315,9 +315,18 @@ namespace Abuksigun.UpScript
             var func =  FindMethod(name, arguments.Select(x => x.Type).ToArray());
             if (func == null)
             {
+                if (arguments.Length == 0)
+                    throw new ParserException($"Method {name} not found for no arguments");
+
                 var allConversions = arguments.Select(x => FindConversions(x.Type, "op_Implicit")).ToList();
+                if (allConversions.Any(x => x.Count == 0))
+                    throw new ParserException($"No implicit conversion found for type {string.Join(", ", allConversions.Select(x => x.Count > 0 ? x[0].ReturnType.Name : "None"))} in method {name}");
+
                 List<Method[]> combinations = new();
                 GenerateCombinations(allConversions, new Method[allConversions.Count], combinations, 0);
+
+                if (combinations.Count == 0)
+                    throw new ParserException($"No valid combinations found for method {name} with arguments {string.Join(", ", arguments.Select(x => x.Type.Name))}");
 
                 foreach (var combination in combinations)
                 {
