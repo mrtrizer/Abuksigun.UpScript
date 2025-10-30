@@ -52,11 +52,18 @@ namespace Abuksigun.UpScript
         internal record Indexer(Func<object, object[], object> Get, Func<object, object[], object, object> Set, int ArgsN);
         internal record SetOperator { }
         public Dictionary<string, object> Variables { get; } = new();
+        public Dictionary<string, Type> VariableTypes { get; } = new();
 
-        public Parser(string input, Dictionary<string, object> variables = null)
+        public Parser(string input, Dictionary<string, object> variables = null, Dictionary<string, Type> declarations= null)
         {
             this.input = input;
             Variables = variables ?? new();
+            VariableTypes = variables?.ToDictionary(x => x.Key, y => y.Value.GetType()) ?? new();
+            if (declarations != null)
+            {
+                foreach (var kvp in declarations)
+                    VariableTypes[kvp.Key] = kvp.Value;
+            }
         }
 
         Token AddToken(TokenType tokenType, object value, int StartIndex, int Length)
@@ -407,8 +414,8 @@ namespace Abuksigun.UpScript
                 {
                     if (tokens.Count - 1 > parentI && tokens[parentI + 1].Type == TokenType.Function)
                         result = AddMethod(token.Value as string, tokens[++parentI].Children.Select(Compile).ToArray());
-                    else if (Variables.TryGetValue(token.Value as string, out var variable))
-                        result = new(variable.GetType(), new() { new Object((Dictionary<string, object> variables) => variables[token.Value as string], (Dictionary<string, object> variables, object value) => (variables[token.Value as string] = value)) });
+                    else if (VariableTypes.TryGetValue(token.Value as string, out var variableType))
+                        result = new(variableType, new() { new Object((Dictionary<string, object> variables) => variables[token.Value as string], (Dictionary<string, object> variables, object value) => (variables[token.Value as string] = value)) });
                     else if (typesMap.TryGetValue(token.Value as string, out var type))
                         result = new(type, new() { type });
                     else

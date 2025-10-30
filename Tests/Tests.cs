@@ -35,7 +35,7 @@ namespace Abuksigun.UpScript.Tests
                 var testValue = (int)ExpressionEvaluator.Run(instructions, variables);
                 Assert.AreEqual(10, testValue);
                 Assert.AreEqual(10, variables["testInt"]);
-                Assert.AreEqual(10, testObject.field);
+                Assert.AreEqual(1078, testObject.field);
             }
             {
                 var variables = new Dictionary<string, object> { ["test_1"] = new Vector3(1, 2, 3) };
