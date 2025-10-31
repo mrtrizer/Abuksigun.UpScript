@@ -37,7 +37,8 @@ namespace Abuksigun.UpScript
     {
         public class ParserException : Exception
         {
-            public ParserException(string message, Exception e = null) : base(message, e) { }
+            public int Column { get; }
+            public ParserException(string message, int column, Exception e = null) : base(message, e) { Column = column; }
         }
 
         record Method(object Func, Type ReturnType);
@@ -210,7 +211,7 @@ namespace Abuksigun.UpScript
                 string currentTokensString = TokenToString(input, root);
                 while (root.Children.Count > 0)
                     root = root.Children[^1];
-                throw new ParserException($"Unexpect token at: {root.StartIndex + root.Length}\n{input.Substring(0, root.StartIndex)}###\n{currentTokensString}");
+                throw new ParserException($"Unexpect token {currentTokensString}", root.StartIndex + root.Length);
             }
             return root;
         }
@@ -316,24 +317,24 @@ namespace Abuksigun.UpScript
             return conversions;
         }
 
-        CompilationResult AddMethod(string name, params CompilationResult[] arguments)
+        CompilationResult AddMethod(string name, int index,params CompilationResult[] arguments)
         {
             List<object> flow = new();
             var func =  FindMethod(name, arguments.Select(x => x.Type).ToArray());
             if (func == null)
             {
                 if (arguments.Length == 0)
-                    throw new ParserException($"Method {name} not found for no arguments");
+                    throw new ParserException($"Method {name} not found for no arguments", index);
 
                 var allConversions = arguments.Select(x => FindConversions(x.Type, "op_Implicit")).ToList();
                 if (allConversions.Any(x => x.Count == 0))
-                    throw new ParserException($"No implicit conversion found for type {string.Join(", ", allConversions.Select(x => x.Count > 0 ? x[0].ReturnType.Name : "None"))} in method {name}");
+                    throw new ParserException($"No implicit conversion found for type {string.Join(", ", allConversions.Select(x => x.Count > 0 ? x[0].ReturnType.Name : "None"))} in method {name}", index);
 
                 List<Method[]> combinations = new();
                 GenerateCombinations(allConversions, new Method[allConversions.Count], combinations, 0);
 
                 if (combinations.Count == 0)
-                    throw new ParserException($"No valid combinations found for method {name} with arguments {string.Join(", ", arguments.Select(x => x.Type.Name))}");
+                    throw new ParserException($"No valid combinations found for method {name} with arguments {string.Join(", ", arguments.Select(x => x.Type.Name))}", index);
 
                 foreach (var combination in combinations)
                 {
@@ -356,7 +357,7 @@ namespace Abuksigun.UpScript
             }
 
             if (func == null)
-                throw new ParserException($"Method {name} not found for types {string.Join(", ", arguments.Select(x => x.Type.Name))}");
+                throw new ParserException($"Method {name} not found for types {string.Join(", ", arguments.Select(x => x.Type.Name))}", index);
 
             flow.Add(func.Func);
             return new(func.ReturnType, flow);
@@ -413,13 +414,13 @@ namespace Abuksigun.UpScript
                 else if (token.Type == TokenType.Reference)
                 {
                     if (tokens.Count - 1 > parentI && tokens[parentI + 1].Type == TokenType.Function)
-                        result = AddMethod(token.Value as string, tokens[++parentI].Children.Select(Compile).ToArray());
+                        result = AddMethod(token.Value as string, token.StartIndex, tokens[++parentI].Children.Select(Compile).ToArray());
                     else if (VariableTypes.TryGetValue(token.Value as string, out var variableType))
                         result = new(variableType, new() { new Object((Dictionary<string, object> variables) => variables[token.Value as string], (Dictionary<string, object> variables, object value) => (variables[token.Value as string] = value)) });
                     else if (typesMap.TryGetValue(token.Value as string, out var type))
                         result = new(type, new() { type });
                     else
-                        throw new ParserException($"Type or variable {token.Value as string} not found");
+                        throw new ParserException($"Type or variable {token.Value as string} not found", token.StartIndex);
                 }
                 else if (token.Type == TokenType.Block)
                 {
@@ -433,14 +434,14 @@ namespace Abuksigun.UpScript
                         var method = FindConversions(r1.Type, $"op_Explicit").Find(x => x.ReturnType == type);
                         method ??= FindConversions(r1.Type, $"op_Implicit").Find(x => x.ReturnType == type);
                         if (method == null)
-                            throw new ParserException($"There is no explicit conversion for type {r1.Type.Name} into type {child.Value as string}");
+                            throw new ParserException($"There is no explicit conversion for type {r1.Type.Name} into type {child.Value as string}", child.StartIndex);
                         result = new(method.ReturnType, r1.Flow.Append(method.Func).ToList());
                     }
                     else if (child.Type == TokenType.Unary)
                     {
                         i = 1;
                         CompilationResult r1 = Compile(token.Children, ref i);
-                        result = AddMethod(unaryOperators[input.Substring(child.StartIndex, child.Length)], r1);
+                        result = AddMethod(unaryOperators[input.Substring(child.StartIndex, child.Length)], child.StartIndex, r1);
                     }
                     else if (child.Type == TokenType.Increment)
                     {
@@ -448,9 +449,9 @@ namespace Abuksigun.UpScript
                         CompilationResult r1 = Compile(token.Children, ref i);
                         string op = input.Substring(child.StartIndex, child.Length);
                         if (r1.Flow[^1] is not (Property or Object))
-                            throw new ParserException($"{op} operator can only be used on left side expressions such as variable");
+                            throw new ParserException($"{op} operator can only be used on left side expressions such as variable", child.StartIndex);
                         if (!r1.Type.IsPrimitive)
-                            throw new ParserException($"{op} operator can only be used on primitive types");
+                            throw new ParserException($"{op} operator can only be used on primitive types", child.StartIndex);
                         var increment = FindMethod(unaryOperators[op], r1.Type).Func;
                         result = new CompilationResult(r1.Type, r1.Flow.Concat(r1.Flow).Append(increment).Append(new SetOperator()).ToList());
                     }
@@ -464,7 +465,7 @@ namespace Abuksigun.UpScript
                             {
                                 i++;
                                 CompilationResult r2 = Compile(token.Children, ref i);
-                                r1 = AddMethod(binaryOperators[input.Substring(child.StartIndex, child.Length)], r1, r2);
+                                r1 = AddMethod(binaryOperators[input.Substring(child.StartIndex, child.Length)], child.StartIndex, r1, r2);
                             }
                             else if (child.Type == TokenType.Setter)
                             {
@@ -486,9 +487,9 @@ namespace Abuksigun.UpScript
                                     var argumentTypes = arguments.Select(x => x.Type).ToArray();
                                     var method = methods.Find(x => x.GetParameters().Select(x => x.ParameterType).SequenceEqual(argumentTypes));
                                     if (method == null)
-                                        throw new ParserException($"Method or extension {memberName} not found for types {string.Join(", ", argumentTypes.Select(x => x.Name))}");
+                                        throw new ParserException($"Method or extension {memberName} not found for types {string.Join(", ", argumentTypes.Select(x => x.Name))}", child.StartIndex);
                                     if (method.ReturnType == typeof(void))
-                                        throw new ParserException($"Method {memberName} returns void. Void methods are not supported, use functional approach.");
+                                        throw new ParserException($"Method {memberName} returns void. Void methods are not supported, use functional approach.", child.StartIndex);
                                     r1 = new CompilationResult(method.ReturnType, r1.Flow.Concat(arguments.SelectMany(x => x.Flow)).Append(method).ToList());
                                 }
                                 else
@@ -540,7 +541,7 @@ namespace Abuksigun.UpScript
                 if (result != null)
                     return result;
 
-                throw new ParserException($"Unexpected token type {token.Type}");
+                throw new ParserException($"Unexpected token type {token.Type}", token.StartIndex);
             }
             catch (Exception e)
             {
